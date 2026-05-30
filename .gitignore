@@ -1,0 +1,31 @@
+# Secrets & runtime config — never commit these
+.env
+data/provider_config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Binary index files (large, regenerated from documents)
+index/faiss.bin
+index/chunks.pkl
+index/bm25_corpus.pkl
+
+# Runtime data (logs, tickets — may contain sensitive content)
+audit_log.jsonl
+data/ingest_log.jsonl
+data/tickets.jsonl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

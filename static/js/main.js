@@ -1467,6 +1467,10 @@ document.getElementById("training-domain-filter")?.addEventListener("change", ()
   currentQuestion = null;
   pickNextQuestion();
 });
+document.getElementById("training-difficulty-filter")?.addEventListener("change", () => {
+  currentQuestion = null;
+  pickNextQuestion();
+});
 
 async function loadTraining() {
   await Promise.all([loadTrainingStats(), loadTrainingQuestions()]);
@@ -1519,8 +1523,12 @@ async function loadTrainingQuestions() {
 }
 
 function pickNextQuestion() {
-  const domain = document.getElementById("training-domain-filter")?.value || "";
-  const pool = trainingQuestions.filter(q => !domain || q.domain === domain);
+  const domain     = document.getElementById("training-domain-filter")?.value     || "";
+  const difficulty = document.getElementById("training-difficulty-filter")?.value || "";
+  const pool = trainingQuestions.filter(q =>
+    (!domain     || q.domain     === domain) &&
+    (!difficulty || q.difficulty === difficulty)
+  );
   if (!pool.length) {
     document.getElementById("training-quiz-area").innerHTML = `
       <div class="placeholder">
