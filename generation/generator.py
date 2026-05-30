@@ -58,6 +58,28 @@ Respond with VALID JSON ONLY — no markdown, no code fences:
 
 User question: {query}"""
 
+_EVAL_PROMPT = """\
+You are evaluating a SIX Group employee's training answer.
+
+Situation presented to the employee:
+{situation}
+
+Reference answer (ideal response):
+{expected_answer}
+
+Employee's answer:
+{user_answer}
+
+Score the employee's answer from 0 to 100 based on:
+- Accuracy (is the information correct?)
+- Completeness (are key points covered?)
+- Professionalism (appropriate tone and language?)
+
+Be encouraging and constructive.
+
+Respond with VALID JSON ONLY — no markdown, no code fences:
+{{"score": <integer 0-100>, "feedback": "<2-3 sentence constructive feedback>", "strengths": ["<what they did well>"], "improvements": ["<area to improve>"]}}"""
+
 
 # ── Provider abstraction ──────────────────────────────────────────────────────
 
@@ -373,3 +395,39 @@ class Generator:
             model       = p.model_name,
             no_data     = no_data,
         )
+
+    def evaluate_answer(
+        self,
+        situation: str,
+        expected_answer: str,
+        user_answer: str,
+    ) -> dict:
+        """
+        Evaluates a user's training answer against the reference answer.
+        Returns a dict with score, feedback, strengths, improvements, and model.
+        """
+        p      = self._provider()
+        prompt = _EVAL_PROMPT.format(
+            situation       = situation,
+            expected_answer = expected_answer,
+            user_answer     = user_answer,
+        )
+        raw, _ = p.complete(prompt)
+        try:
+            data = json.loads(_strip_fences(raw))
+            return {
+                "score":        int(data.get("score", 50)),
+                "feedback":     data.get("feedback", ""),
+                "strengths":    data.get("strengths", []),
+                "improvements": data.get("improvements", []),
+                "model":        p.model_name,
+            }
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Eval JSON parse failed (%s). Raw: %.300s", exc, raw)
+            return {
+                "score":        50,
+                "feedback":     raw,
+                "strengths":    [],
+                "improvements": [],
+                "model":        p.model_name,
+            }

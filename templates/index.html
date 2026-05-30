@@ -23,6 +23,7 @@
         <button class="tab-btn"        data-tab="ingest" id="tab-btn-ingest">&#8659; Ingest</button>
         <button class="tab-btn active" data-tab="search" id="tab-btn-search">&#9906; Ask</button>
         <button class="tab-btn"        data-tab="audit"  id="tab-btn-audit" >&#128196; Audit Log</button>
+        <button class="tab-btn"        data-tab="training" id="tab-btn-training">&#127919; Training</button>
         <button class="tab-btn hidden" data-tab="admin"   id="tab-btn-admin"  >&#128101; Users</button>
         <button class="tab-btn hidden" data-tab="tickets" id="tab-btn-tickets">&#127915; Tickets</button>
         <button class="tab-btn hidden" data-tab="insights" id="tab-btn-insights">&#128202; Insights</button>
@@ -234,6 +235,45 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
+       TAB — TRAINING (all logged-in users)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-training" class="tab-page hidden">
+    <div class="training-page">
+
+      <!-- Stats bar -->
+      <div class="training-stats-bar" id="training-stats-bar">
+        <div class="placeholder"><p>Loading…</p></div>
+      </div>
+
+      <!-- Domain filter -->
+      <div class="training-controls">
+        <select id="training-domain-filter">
+          <option value="">All domains</option>
+          <option value="Legal">Legal</option>
+          <option value="Customer Service">Customer Service</option>
+          <option value="HR">HR</option>
+          <option value="Finance">Finance</option>
+          <option value="Technology">Technology</option>
+          <option value="Operations">Operations</option>
+          <option value="Marketing">Marketing</option>
+          <option value="Data Procurement">Data Procurement</option>
+          <option value="Other">Other</option>
+        </select>
+        <button class="btn-secondary" id="training-next-btn">&#9654; Next Question</button>
+      </div>
+
+      <!-- Quiz area -->
+      <div id="training-quiz-area">
+        <div class="placeholder">
+          <div class="placeholder-icon">&#127919;</div>
+          <p>Select a domain and click <strong>Next Question</strong> to start training.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
        TAB 4 — ADMIN (admin role only)
   ══════════════════════════════════════════════════════════ -->
   <div id="tab-admin" class="tab-page hidden">
@@ -379,6 +419,59 @@
 
       <div id="tickets-list">
         <div class="placeholder"><div class="placeholder-icon">&#127915;</div><p>No tickets yet.</p></div>
+      </div>
+
+      <!-- Question Bank (expert + admin) -->
+      <div class="tickets-section-divider"></div>
+      <div class="tickets-header-row" style="margin-top:32px">
+        <div>
+          <h2 class="panel-title" style="margin-bottom:4px">Question Bank</h2>
+          <p class="tickets-desc">Create scenario-based training questions for employees in your domain.</p>
+        </div>
+        <button class="btn-primary" id="qb-add-btn" style="font-size:13px;padding:8px 16px">&#43; Add Question</button>
+      </div>
+
+      <div id="qb-add-form" class="qb-add-form hidden">
+        <div class="field-group">
+          <label for="qb-domain">Domain</label>
+          <select id="qb-domain">
+            <option value="">— Select —</option>
+            <option value="Legal">Legal</option>
+            <option value="Customer Service">Customer Service</option>
+            <option value="HR">HR</option>
+            <option value="Finance">Finance</option>
+            <option value="Technology">Technology</option>
+            <option value="Operations">Operations</option>
+            <option value="Marketing">Marketing</option>
+            <option value="Data Procurement">Data Procurement</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="qb-difficulty">Difficulty</label>
+          <select id="qb-difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label for="qb-situation">Situation / Scenario</label>
+          <textarea id="qb-situation" rows="4" placeholder="Describe the workplace scenario the employee will read…"></textarea>
+        </div>
+        <div class="field-group">
+          <label for="qb-answer">Expected Answer (used for evaluation, not shown to users)</label>
+          <textarea id="qb-answer" rows="4" placeholder="The ideal response an expert would give…"></textarea>
+        </div>
+        <div id="qb-form-error" class="error-box hidden"></div>
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <button class="btn-primary" id="qb-save-btn" style="font-size:13px;padding:8px 18px">Save Question</button>
+          <button class="btn-secondary" id="qb-cancel-btn" style="font-size:13px;padding:8px 14px">Cancel</button>
+        </div>
+      </div>
+
+      <div id="qb-list" class="qb-list">
+        <div class="placeholder"><div class="placeholder-icon">&#128218;</div><p>No questions yet.</p></div>
       </div>
 
     </div>

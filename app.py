@@ -17,6 +17,8 @@ from generation.audit_logger import read_by_id, read_conversation, read_recent
 from generation.generator import ANTHROPIC_MODELS
 from generation.insight_engine import InsightEngine
 from generation.ticket_store import TicketStore
+from generation.training_store import TrainingStore
+from generation.user_progress import UserProgressStore
 from ingestion import IngestionPipeline
 from retrieval import RetrievalPipeline
 
@@ -33,6 +35,8 @@ retrieval_pipeline  = RetrievalPipeline()
 _provider_config.load()          # restore admin-chosen provider before pipeline init
 generation_pipeline = GenerationPipeline()
 ticket_store        = TicketStore()
+training_store      = TrainingStore()
+progress_store      = UserProgressStore()
 insight_engine      = InsightEngine()
 retrieval_pipeline.load_index()
 
@@ -878,6 +882,147 @@ def get_gap_report():
     if user.role not in ("expert", "admin"):
         return jsonify({"error": "Access restricted to experts and admins."}), 403
     return jsonify(insight_engine.generate_gap_report())
+
+
+# ── Training ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/training/questions", methods=["GET"])
+@login_required
+def training_list_questions():
+    """
+    Lists training questions.
+    - Users (quiz mode): all questions across domains; expected_answer hidden.
+    - Experts (quiz mode): all questions; expected_answer hidden.
+    - Experts (manage=1): only their domain; expected_answer shown.
+    - Admins (manage=1): all questions; expected_answer shown.
+    """
+    user    = get_current_user()
+    manage  = request.args.get("manage", "0") == "1"
+
+    if manage and user.role in ("expert", "admin"):
+        # Expert sees only their own domain in manage mode
+        domain_filter = user.domain if user.role == "expert" else None
+        questions = training_store.get_all(domain=domain_filter)
+        # Include expected_answer in manage mode
+        return jsonify({"questions": questions})
+    else:
+        # Quiz mode: all questions, hide expected_answer
+        questions = training_store.get_all()
+        sanitised = [{k: v for k, v in q.items() if k != "expected_answer"} for q in questions]
+        return jsonify({"questions": sanitised})
+
+
+@app.route("/api/training/questions", methods=["POST"])
+@login_required
+def training_create_question():
+    """Creates a new training question. Admin only."""
+    user = get_current_user()
+    if user.role != "admin":
+        return jsonify({"error": "Creating training questions is restricted to admins."}), 403
+
+    body       = request.get_json(force=True) or {}
+    domain     = (body.get("domain") or "").strip()
+    situation  = (body.get("situation") or "").strip()
+    expected   = (body.get("expected_answer") or "").strip()
+    difficulty = (body.get("difficulty") or "medium").strip()
+
+    if not domain or not situation or not expected:
+        return jsonify({"error": "domain, situation, and expected_answer are required."}), 400
+
+    question = training_store.create(
+        domain          = domain,
+        situation       = situation,
+        expected_answer = expected,
+        created_by      = user.user_id,
+        created_by_name = user.name,
+        difficulty      = difficulty,
+    )
+    return jsonify(question), 201
+
+
+@app.route("/api/training/questions/<qid>", methods=["DELETE"])
+@login_required
+def training_delete_question(qid: str):
+    """Deletes a training question. Admin only."""
+    user = get_current_user()
+    if user.role != "admin":
+        return jsonify({"error": "Deleting training questions is restricted to admins."}), 403
+
+    question = training_store.find_by_id(qid)
+    if not question:
+        return jsonify({"error": f"Question '{qid}' not found."}), 404
+
+    # Expert domain enforcement
+    if user.role == "expert" and question.get("domain") != user.domain:
+        return jsonify({"error": "You can only delete questions in your own domain."}), 403
+
+    training_store.delete(qid)
+    return jsonify({"success": True})
+
+
+@app.route("/api/training/evaluate", methods=["POST"])
+@login_required
+def training_evaluate():
+    """
+    Evaluates a user's answer to a training question via LLM,
+    records the attempt, and returns score/feedback plus progress info.
+    """
+    user = get_current_user()
+    body = request.get_json(force=True) or {}
+
+    question_id = (body.get("question_id") or "").strip()
+    user_answer = (body.get("user_answer") or "").strip()
+
+    if not question_id or not user_answer:
+        return jsonify({"error": "question_id and user_answer are required."}), 400
+
+    question = training_store.find_by_id(question_id)
+    if not question:
+        return jsonify({"error": f"Question '{question_id}' not found."}), 404
+
+    try:
+        result = generation_pipeline.evaluate(
+            situation       = question["situation"],
+            expected_answer = question["expected_answer"],
+            user_answer     = user_answer,
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    # Record the attempt
+    points_earned = max(1, result["score"] // 10)
+    progress_store.record(
+        user_id      = user.user_id,
+        question_id  = question_id,
+        domain       = question["domain"],
+        score        = result["score"],
+        feedback     = result["feedback"],
+        strengths    = result["strengths"],
+        improvements = result["improvements"],
+    )
+
+    stats = progress_store.get_user_stats(user.user_id)
+
+    return jsonify({
+        "score":           result["score"],
+        "feedback":        result["feedback"],
+        "strengths":       result["strengths"],
+        "improvements":    result["improvements"],
+        "points_earned":   points_earned,
+        "expected_answer": question["expected_answer"],
+        "level":           stats["level"],
+        "total_points":    stats["total_points"],
+    })
+
+
+@app.route("/api/training/progress", methods=["GET"])
+@login_required
+def training_progress():
+    """Returns the current user's training stats and last 10 attempts."""
+    user    = get_current_user()
+    stats   = progress_store.get_user_stats(user.user_id)
+    history = progress_store.get_user_history(user.user_id)[:10]
+    return jsonify({"stats": stats, "history": history})
 
 
 if __name__ == "__main__":

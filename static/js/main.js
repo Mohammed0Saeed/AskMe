@@ -54,6 +54,12 @@ function applyRoleUI() {
     ingestTab.classList.remove("hidden");
   }
 
+  // Training tab: only for regular users
+  const trainingTab = document.getElementById("tab-btn-training");
+  if (role !== "user") {
+    trainingTab.classList.add("hidden");
+  }
+
   // Admin tab: only for admins
   const adminTab = document.getElementById("tab-btn-admin");
   if (role === "admin") {
@@ -119,6 +125,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (target === "tickets")  loadTickets();
     if (target === "insights") loadInsights();
     if (target === "kb")       loadKBExplorer();
+    if (target === "training") loadTraining();
   });
 });
 
@@ -941,13 +948,14 @@ async function loadTickets() {
     if (status) tickets = tickets.filter(t => t.status === status);
     if (!tickets.length) {
       list.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#127915;</div><p>No tickets found.</p></div>`;
-      return;
+    } else {
+      list.innerHTML = "";
+      tickets.forEach((t, i) => list.appendChild(buildTicketCard(t, i + 1)));
     }
-    list.innerHTML = "";
-    tickets.forEach((t, i) => list.appendChild(buildTicketCard(t, i + 1)));
   } catch {
     list.innerHTML = `<div class="error-box">Failed to load tickets.</div>`;
   }
+  await loadQuestionBank();
 }
 
 function buildTicketCard(t, idx = 1) {
@@ -1444,4 +1452,296 @@ function renderMarkdown(text) {
 
   closeList();
   return html;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   TAB — TRAINING
+════════════════════════════════════════════════════════════════ */
+
+let trainingQuestions = [];   // currently loaded questions
+let currentQuestion   = null; // question being answered
+
+document.getElementById("training-next-btn")?.addEventListener("click", pickNextQuestion);
+document.getElementById("training-domain-filter")?.addEventListener("change", () => {
+  currentQuestion = null;
+  pickNextQuestion();
+});
+
+async function loadTraining() {
+  await Promise.all([loadTrainingStats(), loadTrainingQuestions()]);
+}
+
+async function loadTrainingStats() {
+  try {
+    const res  = await fetch("/api/training/progress");
+    const data = await res.json();
+    renderTrainingStats(data.stats || {});
+  } catch { /* silent */ }
+}
+
+function renderTrainingStats(stats) {
+  const bar = document.getElementById("training-stats-bar");
+  if (!bar) return;
+  const level = stats.level || "Trainee";
+  const LEVEL_COLORS = { Trainee: "#64748b", Analyst: "#2563eb", Specialist: "#7c3aed", Expert: "#d97706" };
+  const color = LEVEL_COLORS[level] || "#64748b";
+  const streakText = stats.streak > 0 ? `&#128293; ${stats.streak}-day streak` : "No streak yet";
+  bar.innerHTML = `
+    <div class="training-stat-card">
+      <div class="training-level-badge" style="background:${color}">${escapeHtml(level)}</div>
+      <div class="training-stat-label">Level</div>
+    </div>
+    <div class="training-stat-card">
+      <div class="training-stat-value">${stats.total_points || 0}</div>
+      <div class="training-stat-label">Points</div>
+    </div>
+    <div class="training-stat-card">
+      <div class="training-stat-value">${streakText}</div>
+      <div class="training-stat-label">Streak</div>
+    </div>
+    <div class="training-stat-card">
+      <div class="training-stat-value">${stats.total_attempts || 0}</div>
+      <div class="training-stat-label">Attempts</div>
+    </div>
+    <div class="training-stat-card">
+      <div class="training-stat-value">${stats.average_score || 0}%</div>
+      <div class="training-stat-label">Avg Score</div>
+    </div>`;
+}
+
+async function loadTrainingQuestions() {
+  try {
+    const res  = await fetch("/api/training/questions");
+    const data = await res.json();
+    trainingQuestions = data.questions || [];
+  } catch { trainingQuestions = []; }
+}
+
+function pickNextQuestion() {
+  const domain = document.getElementById("training-domain-filter")?.value || "";
+  const pool = trainingQuestions.filter(q => !domain || q.domain === domain);
+  if (!pool.length) {
+    document.getElementById("training-quiz-area").innerHTML = `
+      <div class="placeholder">
+        <div class="placeholder-icon">&#127919;</div>
+        <p>No training questions available${domain ? " for this domain" : ""}. Check back later.</p>
+      </div>`;
+    return;
+  }
+  // Pick a random question, avoiding the same one twice in a row
+  const candidates = pool.filter(q => !currentQuestion || q.question_id !== currentQuestion.question_id);
+  currentQuestion = (candidates.length ? candidates : pool)[Math.floor(Math.random() * (candidates.length || pool.length))];
+  renderQuestion(currentQuestion);
+}
+
+function renderQuestion(q) {
+  const area = document.getElementById("training-quiz-area");
+  const DIFF_COLORS = { easy: "#16a34a", medium: "#ca8a04", hard: "#dc2626" };
+  area.innerHTML = `
+    <div class="training-question-card">
+      <div class="training-q-header">
+        <span class="badge badge-domain">${escapeHtml(q.domain)}</span>
+        <span class="training-diff-badge" style="background:${DIFF_COLORS[q.difficulty]||"#64748b"}">${escapeHtml(q.difficulty)}</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">by ${escapeHtml(q.created_by_name)}</span>
+      </div>
+      <div class="training-situation">
+        <div class="training-situation-label">&#127919; Scenario</div>
+        <div class="training-situation-text">${escapeHtml(q.situation)}</div>
+      </div>
+      <div class="training-answer-area">
+        <label class="training-answer-label">How would you respond?</label>
+        <textarea id="training-answer-input" class="training-answer-input" rows="5"
+          placeholder="Type your answer here…"></textarea>
+      </div>
+      <div id="training-submit-error" class="error-box hidden"></div>
+      <button class="btn-primary training-submit-btn" id="training-submit-btn" style="margin-top:4px">
+        <span id="training-submit-label">&#9654; Submit Answer</span>
+        <span id="training-submit-spinner" class="spinner hidden"></span>
+      </button>
+    </div>`;
+
+  document.getElementById("training-submit-btn").addEventListener("click", submitTrainingAnswer);
+}
+
+async function submitTrainingAnswer() {
+  const answer = document.getElementById("training-answer-input")?.value.trim();
+  if (!answer) {
+    document.getElementById("training-submit-error").textContent = "Please type an answer first.";
+    document.getElementById("training-submit-error").classList.remove("hidden");
+    return;
+  }
+
+  const btn    = document.getElementById("training-submit-btn");
+  const label  = document.getElementById("training-submit-label");
+  const spin   = document.getElementById("training-submit-spinner");
+  btn.disabled = true;
+  label.classList.add("hidden");
+  spin.classList.remove("hidden");
+
+  try {
+    const res  = await fetch("/api/training/evaluate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question_id: currentQuestion.question_id, user_answer: answer }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Evaluation failed.");
+    renderResult(data, answer);
+    loadTrainingStats(); // refresh stats
+  } catch (err) {
+    document.getElementById("training-submit-error").textContent = err.message;
+    document.getElementById("training-submit-error").classList.remove("hidden");
+    btn.disabled = false;
+    label.classList.remove("hidden");
+    spin.classList.add("hidden");
+  }
+}
+
+function renderResult(data, userAnswer) {
+  const area  = document.getElementById("training-quiz-area");
+  const score = data.score || 0;
+  const stars = score >= 90 ? "&#11088;&#11088;&#11088;" : score >= 70 ? "&#11088;&#11088;" : score >= 50 ? "&#11088;" : "";
+  const ringColor = score >= 80 ? "#16a34a" : score >= 60 ? "#ca8a04" : "#dc2626";
+  const circumference = 2 * Math.PI * 38;
+  const dashoffset = circumference * (1 - score / 100);
+
+  const strengthsHtml = (data.strengths || []).map(s =>
+    `<li class="training-feedback-item training-strength">&#10003; ${escapeHtml(s)}</li>`).join("");
+  const improvementsHtml = (data.improvements || []).map(s =>
+    `<li class="training-feedback-item training-improvement">&#8594; ${escapeHtml(s)}</li>`).join("");
+
+  area.innerHTML = `
+    <div class="training-result-card">
+      <div class="training-result-header">
+        <div class="training-score-ring-wrap">
+          <svg class="training-score-ring" viewBox="0 0 88 88" width="88" height="88">
+            <circle cx="44" cy="44" r="38" fill="none" stroke="var(--border)" stroke-width="8"/>
+            <circle cx="44" cy="44" r="38" fill="none" stroke="${ringColor}" stroke-width="8"
+              stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${dashoffset.toFixed(2)}"
+              stroke-linecap="round" transform="rotate(-90 44 44)"/>
+          </svg>
+          <div class="training-score-label">${score}<span style="font-size:13px">/100</span></div>
+        </div>
+        <div class="training-result-meta">
+          <div class="training-stars">${stars}</div>
+          <div class="training-points-earned">+${data.points_earned || 0} pts</div>
+          <div class="training-level-info">Level: <strong>${escapeHtml(data.level || "")}</strong> &nbsp;|&nbsp; Total: <strong>${data.total_points || 0} pts</strong></div>
+        </div>
+      </div>
+
+      <div class="training-feedback-text">${escapeHtml(data.feedback || "")}</div>
+
+      ${strengthsHtml || improvementsHtml ? `
+      <ul class="training-feedback-list">
+        ${strengthsHtml}
+        ${improvementsHtml}
+      </ul>` : ""}
+
+      <details class="training-ref-answer">
+        <summary>&#128161; View reference answer</summary>
+        <div class="training-ref-text">${escapeHtml(data.expected_answer || "")}</div>
+      </details>
+
+      <button class="btn-primary" id="training-next-after-btn" style="margin-top:16px">&#9654; Next Question</button>
+    </div>`;
+
+  document.getElementById("training-next-after-btn").addEventListener("click", pickNextQuestion);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   TAB — QUESTION BANK (expert/admin in tickets tab)
+════════════════════════════════════════════════════════════════ */
+
+document.getElementById("qb-add-btn")?.addEventListener("click", () => {
+  document.getElementById("qb-add-form").classList.toggle("hidden");
+});
+document.getElementById("qb-cancel-btn")?.addEventListener("click", () => {
+  document.getElementById("qb-add-form").classList.add("hidden");
+});
+document.getElementById("qb-save-btn")?.addEventListener("click", saveTrainingQuestion);
+
+async function loadQuestionBank() {
+  const list = document.getElementById("qb-list");
+  if (!list) return;
+  list.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Loading…</p></div>`;
+  try {
+    const res  = await fetch("/api/training/questions?manage=1");
+    const data = await res.json();
+    const qs   = data.questions || [];
+    if (!qs.length) {
+      list.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#128218;</div><p>No questions yet. Add the first one above.</p></div>`;
+      return;
+    }
+    list.innerHTML = "";
+    qs.forEach((q, i) => list.appendChild(buildQuestionCard(q, i + 1)));
+  } catch {
+    list.innerHTML = `<div class="error-box">Failed to load questions.</div>`;
+  }
+}
+
+function buildQuestionCard(q, idx = 1) {
+  const div = document.createElement("div");
+  div.className = `qb-card stagger-${Math.min(idx, 10)}`;
+  div.id = `qb-${q.question_id}`;
+  const DIFF_COLORS = { easy: "#16a34a", medium: "#ca8a04", hard: "#dc2626" };
+  div.innerHTML = `
+    <div class="qb-card-header">
+      <span class="badge badge-domain">${escapeHtml(q.domain)}</span>
+      <span class="training-diff-badge" style="background:${DIFF_COLORS[q.difficulty]||"#64748b"}">${escapeHtml(q.difficulty)}</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">by ${escapeHtml(q.created_by_name)}</span>
+      <button class="qb-delete-btn" data-id="${escapeHtml(q.question_id)}" title="Delete">&#128465;</button>
+    </div>
+    <div class="qb-situation">${escapeHtml(q.situation)}</div>
+    <div class="qb-expected"><strong>Expected:</strong> ${escapeHtml((q.expected_answer||"").substring(0, 200))}${(q.expected_answer||"").length > 200 ? "…" : ""}</div>`;
+
+  div.querySelector(".qb-delete-btn").addEventListener("click", () => deleteTrainingQuestion(q.question_id));
+  return div;
+}
+
+async function saveTrainingQuestion() {
+  const domain     = document.getElementById("qb-domain")?.value.trim();
+  const difficulty = document.getElementById("qb-difficulty")?.value || "medium";
+  const situation  = document.getElementById("qb-situation")?.value.trim();
+  const expected   = document.getElementById("qb-answer")?.value.trim();
+  const errEl      = document.getElementById("qb-form-error");
+
+  if (!domain || !situation || !expected) {
+    errEl.textContent = "Domain, situation, and expected answer are all required.";
+    errEl.classList.remove("hidden");
+    return;
+  }
+  errEl.classList.add("hidden");
+
+  const btn = document.getElementById("qb-save-btn");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+
+  try {
+    const res  = await fetch("/api/training/questions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain, difficulty, situation, expected_answer: expected }),
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || "Failed."; errEl.classList.remove("hidden"); return; }
+    document.getElementById("qb-add-form").classList.add("hidden");
+    document.getElementById("qb-situation").value = "";
+    document.getElementById("qb-answer").value    = "";
+    loadQuestionBank();
+  } catch {
+    errEl.textContent = "Network error.";
+    errEl.classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save Question";
+  }
+}
+
+async function deleteTrainingQuestion(qid) {
+  if (!confirm("Delete this training question?")) return;
+  try {
+    const res = await fetch(`/api/training/questions/${encodeURIComponent(qid)}`, { method: "DELETE" });
+    if (res.ok) loadQuestionBank();
+    else { const d = await res.json(); alert(d.error || "Delete failed."); }
+  } catch { alert("Network error."); }
 }

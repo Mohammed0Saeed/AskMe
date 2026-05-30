@@ -62,3 +62,12 @@ class GenerationPipeline:
             len(result.citations),
         )
         return result
+
+    def evaluate(
+        self,
+        situation: str,
+        expected_answer: str,
+        user_answer: str,
+    ) -> dict:
+        """Delegates training answer evaluation to the Generator."""
+        return self._generator.evaluate_answer(situation, expected_answer, user_answer)
