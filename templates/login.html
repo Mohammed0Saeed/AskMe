@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AskMe — Sign In</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="login-body">
+
+  <div class="login-card">
+    <div class="login-logo">&#9670;</div>
+    <h1 class="login-title">AskMe</h1>
+    <p class="login-subtitle">SIX Group &mdash; Knowledge Platform</p>
+
+    <form id="login-form" novalidate>
+
+      <div class="login-field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" name="email"
+               placeholder="firstname_lastname@six.ch" autocomplete="email" required />
+      </div>
+
+      <div class="login-field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" name="password"
+               placeholder="••••••••" autocomplete="current-password" required />
+      </div>
+
+      <div id="login-error" class="login-error hidden"></div>
+
+      <button type="submit" class="login-btn" id="login-btn">
+        <span id="login-btn-label">Sign In</span>
+        <span id="login-btn-spinner" class="spinner hidden" style="border-color:rgba(255,255,255,.3);border-top-color:#fff"></span>
+      </button>
+
+    </form>
+
+    <div class="login-hint">
+      <strong>Demo accounts</strong><br/>
+      <table class="login-hint-table">
+        <tr><td>mohammed_saeed@six.ch</td><td>Admin</td></tr>
+        <tr><td>jacob_six@six.ch</td><td>Expert · Legal</td></tr>
+        <tr><td>mirco_six@six.ch</td><td>Expert · Marketing</td></tr>
+        <tr><td>steve_john@six.ch</td><td>User</td></tr>
+      </table>
+      Password: <code>firstname_1234</code>
+    </div>
+  </div>
+
+  <script>
+    const form    = document.getElementById("login-form");
+    const errBox  = document.getElementById("login-error");
+    const btnLbl  = document.getElementById("login-btn-label");
+    const spinner = document.getElementById("login-btn-spinner");
+    const btn     = document.getElementById("login-btn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errBox.classList.add("hidden");
+      btn.disabled = true;
+      btnLbl.textContent = "Signing in…";
+      spinner.classList.remove("hidden");
+
+      const email    = document.getElementById("login-email").value.trim();
+      const password = document.getElementById("login-password").value;
+
+      try {
+        const res  = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errBox.textContent = data.error || "Login failed.";
+          errBox.classList.remove("hidden");
+        } else {
+          window.location.href = "/";
+        }
+      } catch {
+        errBox.textContent = "Network error. Is the server running?";
+        errBox.classList.remove("hidden");
+      } finally {
+        btn.disabled = false;
+        btnLbl.textContent = "Sign In";
+        spinner.classList.add("hidden");
+      }
+    });
+  </script>
+</body>
+</html>

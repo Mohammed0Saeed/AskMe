@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AskMe — RAG Pipeline</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">&#9670;</span>
+        <span class="logo-text">AskMe</span>
+      </div>
+      <nav class="tab-nav">
+        <button class="tab-btn"        data-tab="ingest" id="tab-btn-ingest">&#8659; Ingest</button>
+        <button class="tab-btn active" data-tab="search" id="tab-btn-search">&#9906; Ask</button>
+        <button class="tab-btn"        data-tab="audit"  id="tab-btn-audit" >&#128196; Audit Log</button>
+        <button class="tab-btn hidden" data-tab="admin"  id="tab-btn-admin" >&#128101; Users</button>
+      </nav>
+      <span class="provider-badge" id="provider-badge">…</span>
+      <span class="index-status"   id="index-status">Loading…</span>
+
+      <!-- User info + logout -->
+      <div class="user-pill" id="user-pill">
+        <div class="user-avatar" id="user-avatar">??</div>
+        <div class="user-info">
+          <span class="user-name"  id="user-name">…</span>
+          <span class="user-role-badge" id="user-role-badge">…</span>
+        </div>
+        <button class="logout-btn" id="logout-btn" title="Sign out">&#8594;</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 1 — INGEST
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-ingest" class="tab-page hidden">
+    <main class="layout">
+
+      <aside class="form-panel">
+        <h2 class="panel-title">Upload Source</h2>
+
+        <!-- Expert domain lock notice -->
+        <div id="expert-domain-notice" class="domain-lock-notice hidden">
+          <span class="domain-lock-icon">&#128274;</span>
+          Documents you upload will be assigned to your domain:
+          <strong id="expert-domain-label"></strong>
+        </div>
+
+        <form id="ingest-form" enctype="multipart/form-data" novalidate>
+
+          <div class="field-group">
+            <label for="source_type">Source type</label>
+            <select id="source_type" name="source_type">
+              <option value="pdf">PDF Document</option>
+              <option value="confluence_html">Confluence (HTML export)</option>
+              <option value="teams">Teams Transcript (.vtt / .json)</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label>File</label>
+            <div class="dropzone" id="dropzone">
+              <div class="dropzone-icon">&#8613;</div>
+              <p class="dropzone-hint" id="dropzone-hint">
+                Drag &amp; drop or <span class="link">click to browse</span>
+              </p>
+              <p class="dropzone-accepted" id="dropzone-accepted">PDF, HTML, VTT, JSON — max 50 MB</p>
+              <input type="file" id="file" name="file" accept=".pdf,.html,.htm,.vtt,.json" hidden />
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="access_level">Access level</label>
+            <select id="access_level" name="access_level">
+              <option value="public">Public</option>
+              <option value="internal" selected>Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+          </div>
+
+          <div class="field-group" id="domain-field-group">
+            <label for="domain">Domain</label>
+            <div class="domain-row">
+              <input type="text" id="domain" name="domain"
+                     placeholder="e.g. Legal, Finance, HR…" autocomplete="off" />
+              <button type="button" id="auto-btn" class="auto-btn">Auto</button>
+            </div>
+            <span class="field-hint">Leave blank or click Auto to let Gemini detect it.</span>
+          </div>
+
+          <div id="teams-fields" class="teams-fields hidden">
+            <div class="field-group">
+              <label for="meeting_title">Meeting title</label>
+              <input type="text" id="meeting_title" name="meeting_title" placeholder="e.g. Q2 Legal Review" />
+            </div>
+            <div class="field-group">
+              <label for="meeting_organiser">Organiser</label>
+              <input type="text" id="meeting_organiser" name="meeting_organiser" placeholder="Full name" />
+            </div>
+            <div class="field-group">
+              <label for="meeting_date">Meeting date</label>
+              <input type="date" id="meeting_date" name="meeting_date" />
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary" id="submit-btn">
+            <span id="btn-label">Ingest Document</span>
+            <span id="btn-spinner" class="spinner hidden"></span>
+          </button>
+        </form>
+      </aside>
+
+      <section class="results-panel">
+        <div class="results-header hidden" id="ingest-results-header">
+          <h2 class="panel-title">Ingested Chunks</h2>
+          <div class="stats-bar" id="stats-bar"></div>
+        </div>
+        <div id="ingest-placeholder" class="placeholder">
+          <div class="placeholder-icon">&#9635;</div>
+          <p>Upload a document and click <strong>Ingest Document</strong> to see chunks here.</p>
+        </div>
+        <div id="ingest-error" class="error-box hidden"></div>
+        <div id="chunks-list" class="chunks-list"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 2 — ASK
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-search" class="tab-page active">
+    <div class="ask-layout">
+    <div class="ask-main">
+
+      <div class="ask-query-panel">
+        <h2 class="panel-title">Ask a Question</h2>
+        <div class="pipeline-trace">
+          <span class="pt-step">Hybrid Search</span>
+          <span class="pt-arrow">→</span>
+          <span class="pt-step">RRF Fusion</span>
+          <span class="pt-arrow">→</span>
+          <span class="pt-step">Cross-Encoder Re-rank</span>
+          <span class="pt-arrow">→</span>
+          <span class="pt-step pt-highlight">Gemini RAG + Citations</span>
+        </div>
+        <textarea id="search-query" class="search-textarea"
+                  placeholder="Ask a question about your ingested documents… (Ctrl+Enter to submit)"
+                  rows="3"></textarea>
+        <div class="search-filters">
+          <div class="filter-item">
+            <label for="s-access">Access level</label>
+            <select id="s-access">
+              <option value="">All levels</option>
+              <option value="public">Public</option>
+              <option value="internal">Internal</option>
+              <option value="confidential">Confidential</option>
+              <option value="restricted">Restricted</option>
+            </select>
+          </div>
+          <div class="filter-item">
+            <label for="s-domain">Domain filter</label>
+            <input type="text" id="s-domain" placeholder="e.g. Legal" />
+          </div>
+          <div class="filter-item">
+            <label for="s-topk">Top-K chunks</label>
+            <input type="number" id="s-topk" value="5" min="1" max="20" style="width:72px" />
+          </div>
+          <button class="btn-primary btn-ask" id="ask-btn">
+            <span id="ask-label">Ask</span>
+            <span id="ask-spinner" class="spinner hidden"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Confidential notice (user role only) -->
+      <div id="confidential-notice" class="confidential-notice hidden">
+        <div class="conf-notice-icon">&#128274;</div>
+        <div class="conf-notice-body">
+          <strong>Confidential source(s) referenced.</strong>
+          <p id="conf-notice-text"></p>
+          <div id="conf-notice-contacts" class="conf-notice-contacts"></div>
+        </div>
+      </div>
+
+      <!-- No-data panel -->
+      <div id="no-data-panel" class="no-data-panel hidden">
+        <div class="no-data-icon">&#128270;</div>
+        <h3 class="no-data-title">Nothing in my database would help me to assist in this matter.</h3>
+        <p class="no-data-hint">The documents currently indexed do not contain relevant information. Try rephrasing, adjusting the domain filter, or asking an expert to ingest additional documents.</p>
+      </div>
+
+      <!-- Answer panel -->
+      <div id="answer-panel" class="answer-panel hidden">
+        <div class="answer-header">
+          <h3 class="answer-title">&#9670; Answer</h3>
+          <span id="conf-badge" class="conf-badge">—</span>
+          <span id="conf-reason" class="conf-reason"></span>
+          <span id="model-chip" class="model-chip"></span>
+          <span class="audit-chip" id="audit-chip"></span>
+        </div>
+        <div id="answer-text" class="answer-text"></div>
+        <div class="citations-section" id="citations-section"></div>
+      </div>
+
+      <div id="ask-error" class="error-box hidden"></div>
+
+      <div id="evidence-section" class="evidence-section hidden">
+        <div class="evidence-header">
+          <h3 class="evidence-title">&#128269; Retrieved Evidence</h3>
+          <span class="evidence-subtitle" id="evidence-subtitle"></span>
+        </div>
+        <div id="search-results" class="chunks-list"></div>
+      </div>
+
+      <div id="ask-placeholder" class="placeholder">
+        <div class="placeholder-icon">&#9906;</div>
+        <p>Enter a question above. The answer will show which file, page, and author each claim comes from.</p>
+      </div>
+
+    </div><!-- /.ask-main -->
+
+    <!-- Token sidebar -->
+    <aside class="token-sidebar">
+      <h3 class="token-sidebar-title">&#9650; Token Usage</h3>
+      <div class="token-section">
+        <div class="token-section-label">LAST QUERY</div>
+        <div class="token-row">
+          <span class="token-row-label">Prompt</span>
+          <div class="token-bar-wrap"><div class="token-bar token-bar-prompt" id="bar-prompt" style="width:0%"></div></div>
+          <span class="token-count" id="cnt-prompt">—</span>
+        </div>
+        <div class="token-row">
+          <span class="token-row-label">Response</span>
+          <div class="token-bar-wrap"><div class="token-bar token-bar-completion" id="bar-completion" style="width:0%"></div></div>
+          <span class="token-count" id="cnt-completion">—</span>
+        </div>
+        <div class="token-total-row">Total <span id="cnt-total">—</span>
+          <span id="cnt-estimated" class="token-estimated hidden">~est.</span>
+        </div>
+      </div>
+      <div class="token-divider"></div>
+      <div class="token-section">
+        <div class="token-section-label">SESSION</div>
+        <div class="token-stat-row"><span>Queries</span><strong id="sess-queries">0</strong></div>
+        <div class="token-stat-row"><span>Total tokens</span><strong id="sess-total">0</strong></div>
+        <div class="token-stat-row"><span>Avg / query</span><strong id="sess-avg">—</strong></div>
+      </div>
+      <div class="token-divider"></div>
+      <div class="token-section">
+        <div class="token-section-label">MODEL</div>
+        <div class="token-model-name" id="token-model-name">—</div>
+      </div>
+    </aside>
+
+    </div><!-- /.ask-layout -->
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 3 — AUDIT LOG
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-audit" class="tab-page hidden">
+    <div class="audit-page">
+      <div class="audit-header-row">
+        <h2 class="panel-title" style="margin-bottom:0">Audit Log</h2>
+        <button class="btn-secondary" id="refresh-audit-btn">&#8635; Refresh</button>
+      </div>
+      <p class="audit-desc">Every question and generated answer is logged here with full provenance — query, answer, citations, confidence, and retrieval scores.</p>
+      <div id="audit-list" class="audit-list">
+        <div class="placeholder"><div class="placeholder-icon">&#128196;</div><p>No entries yet.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 4 — ADMIN (admin role only)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-admin" class="tab-page hidden">
+    <div class="admin-page">
+
+      <!-- Users section -->
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <h2 class="panel-title" style="margin:0">User Management</h2>
+          <button class="btn-primary" id="add-user-btn" style="font-size:13px;padding:8px 16px">+ Add User</button>
+        </div>
+
+        <!-- Add user form (hidden by default) -->
+        <div id="add-user-form" class="add-user-form hidden">
+          <input type="text"  id="new-name"   placeholder="Full Name" />
+          <input type="email" id="new-email"  placeholder="Email (@six.ch)" />
+          <select id="new-role">
+            <option value="user">User</option>
+            <option value="expert">Expert</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input type="text" id="new-domain" placeholder="Domain (experts only)" />
+          <button class="btn-primary" id="save-new-user-btn" style="font-size:13px;padding:8px 16px">Save</button>
+          <button class="btn-secondary" id="cancel-new-user-btn" style="font-size:13px;padding:8px 14px">Cancel</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="users-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Email</th><th>Role</th><th>Domain</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Activity monitor section -->
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <h2 class="panel-title" style="margin:0">Activity Monitor</h2>
+          <button class="btn-secondary" id="refresh-activity-btn">&#8635; Refresh</button>
+        </div>
+        <div id="activity-list" class="activity-list">
+          <div class="placeholder"><div class="placeholder-icon">&#128202;</div><p>Loading activity…</p></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/static/js/main.js"></script>
+</body>
+</html>

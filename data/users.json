@@ -1,0 +1,34 @@
+[
+  {
+    "user_id": "usr_001",
+    "name": "Mohammed Saeed",
+    "email": "mohammed_saeed@six.ch",
+    "role": "admin",
+    "domain": "",
+    "password_hash": "1cdc0331a9f6a004396c0dc0b4c38c93270961066f4522189b3a134bb96e858f"
+  },
+  {
+    "user_id": "usr_002",
+    "name": "Jacob SIX",
+    "email": "jacob_six@six.ch",
+    "role": "expert",
+    "domain": "Legal",
+    "password_hash": "7e7e17f00d890ee8f2921e33c8249a39b5a52114c03c14b2346d905586ac984b"
+  },
+  {
+    "user_id": "usr_003",
+    "name": "Mirco SIX",
+    "email": "mirco_six@six.ch",
+    "role": "expert",
+    "domain": "Marketing",
+    "password_hash": "f6e2919bd5c03268565835d56d50344479a0ac93e6b9161cb651eb2430ce0ca4"
+  },
+  {
+    "user_id": "usr_004",
+    "name": "Steve John",
+    "email": "steve_john@six.ch",
+    "role": "user",
+    "domain": "",
+    "password_hash": "f2f60f676a426da9296c54e5ae5297bb131d98cd3c9b01aa88e9bc5242505533"
+  }
+]
