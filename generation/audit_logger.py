@@ -12,6 +12,19 @@ logger = logging.getLogger(__name__)
 AUDIT_LOG_PATH = "audit_log.jsonl"
 
 
+def _load_all() -> List[dict]:
+    if not os.path.exists(AUDIT_LOG_PATH):
+        return []
+    entries = []
+    with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                entries.append(json.loads(line.strip()))
+            except json.JSONDecodeError:
+                continue
+    return entries
+
+
 class AuditLogger:
     """
     Appends one JSON line per generation call to audit_log.jsonl.
@@ -29,6 +42,9 @@ class AuditLogger:
         self,
         result: GenerationResult,
         retrieval_results: List[RetrievalResult],
+        conversation_id: str = "",
+        user_id: str = "",
+        user_name: str = "",
     ) -> dict:
         """
         Writes one audit entry and returns it as a dict.  The return value is
@@ -36,10 +52,13 @@ class AuditLogger:
         let users link back to the log entry.
         """
         entry = {
-            "audit_id":  result.audit_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "model":     result.model,
-            "query":     result.query,
+            "audit_id":        result.audit_id,
+            "conversation_id": conversation_id,
+            "user_id":         user_id,
+            "user_name":       user_name,
+            "timestamp":       datetime.now(timezone.utc).isoformat(),
+            "model":           result.model,
+            "query":           result.query,
             "answer":    result.answer,
             "confidence": {
                 "level":  result.confidence.level,
@@ -94,40 +113,19 @@ class AuditLogger:
 
 
 def read_recent(n: int = 20) -> List[dict]:
-    """
-    Reads the last n entries from the audit log (most-recent-first).
-    Used by the /api/audit endpoint so the UI can display a live audit trail.
-    Returns an empty list if the log does not exist yet.
-    """
-    if not os.path.exists(AUDIT_LOG_PATH):
-        return []
-
-    with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
-        lines = [l.strip() for l in f if l.strip()]
-
-    entries = []
-    for line in reversed(lines[-n:]):
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return entries
+    """Reads the last n entries from the audit log, most-recent-first."""
+    entries = _load_all()
+    return list(reversed(entries[-n:]))
 
 
 def read_by_id(audit_id: str) -> dict | None:
-    """
-    Finds and returns a single audit entry by its audit_id.
-    Scans the JSONL file linearly — acceptable for log sizes up to ~100k entries.
-    """
-    if not os.path.exists(AUDIT_LOG_PATH):
-        return None
-
-    with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
-        for line in f:
-            try:
-                entry = json.loads(line.strip())
-                if entry.get("audit_id") == audit_id:
-                    return entry
-            except json.JSONDecodeError:
-                continue
+    """Finds and returns a single audit entry by its audit_id."""
+    for entry in _load_all():
+        if entry.get("audit_id") == audit_id:
+            return entry
     return None
+
+
+def read_conversation(conversation_id: str) -> List[dict]:
+    """Returns all audit entries for a conversation_id, oldest-first."""
+    return [e for e in _load_all() if e.get("conversation_id") == conversation_id]

@@ -4,6 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import List, Tuple
 
+import anthropic as _anthropic_sdk
 import requests
 from google import genai
 
@@ -11,9 +12,16 @@ from config import (
     GEMINI_API_KEY, GEMINI_MODEL,
     LLM_PROVIDER, OLLAMA_BASE_URL, OLLAMA_MODEL,
 )
+from generation import provider_config
 from generation.models import Citation, Confidence, GenerationResult, TokenUsage
 from generation.prompt_builder import build_prompt
 from retrieval.models import RetrievalResult
+
+ANTHROPIC_MODELS = [
+    "claude-sonnet-4-6",
+    "claude-opus-4-8",
+    "claude-haiku-4-5-20251001",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -176,9 +184,53 @@ class OllamaProvider(BaseProvider):
         return f"ollama/{self._model}"
 
 
+class AnthropicProvider(BaseProvider):
+    """
+    Anthropic Claude via the official anthropic SDK.
+    Uses messages.create with a single user turn; temperature 0 for
+    deterministic, citation-grounded answers.
+    """
+
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6") -> None:
+        if not api_key:
+            raise ValueError("Anthropic API key is not set.")
+        self._client = _anthropic_sdk.Anthropic(api_key=api_key)
+        self._model  = model
+
+    def complete(self, prompt: str) -> Tuple[str, TokenUsage]:
+        message = self._client.messages.create(
+            model     = self._model,
+            max_tokens= 1024,
+            messages  = [{"role": "user", "content": prompt}],
+        )
+        text  = message.content[0].text if message.content else ""
+        usage = TokenUsage(
+            prompt_tokens     = message.usage.input_tokens,
+            completion_tokens = message.usage.output_tokens,
+            total_tokens      = message.usage.input_tokens + message.usage.output_tokens,
+            estimated         = False,
+        )
+        return text, usage
+
+    @property
+    def model_name(self) -> str:
+        return f"anthropic/{self._model}"
+
+
 def _get_provider() -> BaseProvider:
-    """Factory — reads LLM_PROVIDER from config and returns the right backend."""
-    if LLM_PROVIDER == "ollama":
+    """
+    Factory that reads from the runtime provider_config singleton first,
+    falling back to the .env LLM_PROVIDER setting.  This allows the admin
+    to switch providers at runtime without restarting the server.
+    """
+    cfg      = provider_config.get()
+    provider = cfg.get("provider") or LLM_PROVIDER
+
+    if provider == "anthropic":
+        api_key = cfg.get("anthropic_api_key", "")
+        model   = cfg.get("anthropic_model", "claude-sonnet-4-6")
+        return AnthropicProvider(api_key=api_key, model=model)
+    if provider == "ollama":
         return OllamaProvider()
     return GeminiProvider()
 
@@ -249,19 +301,31 @@ def _parse_response(raw_text: str, results: List[RetrievalResult]) -> dict:
 
 class Generator:
     """
-    Provider-agnostic generation engine.  Delegates the LLM call to whichever
-    backend is configured, parses the structured response, and attaches the
-    token usage so every call is fully accountable in the audit log and the UI.
+    Provider-agnostic generation engine.  The active provider is resolved on
+    every call via the runtime provider_config singleton so an admin can switch
+    models without restarting the server.  Provider instances are cached by a
+    key that captures the full configuration; the instance is only recreated
+    when something actually changes.
     """
 
     def __init__(self) -> None:
-        self._provider = _get_provider()
-        logger.info("LLM provider: %s", self._provider.model_name)
+        self._cached_provider: BaseProvider | None = None
+        self._cached_key: str = ""
+
+    def _provider(self) -> BaseProvider:
+        cfg = provider_config.get()
+        key = json.dumps(cfg, sort_keys=True)
+        if key != self._cached_key:
+            self._cached_provider = _get_provider()
+            self._cached_key      = key
+            logger.info("LLM provider (re)initialised: %s", self._cached_provider.model_name)
+        return self._cached_provider
 
     def generate_conversational(self, query: str) -> GenerationResult:
         """Handles greetings and simple conversational messages without retrieval."""
+        p          = self._provider()
         prompt     = _CONVERSATIONAL_PROMPT.format(query=query)
-        raw, usage = self._provider.complete(prompt)
+        raw, usage = p.complete(prompt)
         parsed     = _parse_response(raw, [])
         return GenerationResult(
             answer      = parsed["answer"],
@@ -269,14 +333,15 @@ class Generator:
             confidence  = parsed["confidence"],
             token_usage = usage,
             query       = query,
-            model       = self._provider.model_name,
+            model       = p.model_name,
             no_data     = False,
         )
 
     def generate_offtopic(self, query: str) -> GenerationResult:
         """Handles questions that fall outside the scope of the knowledge base."""
+        p          = self._provider()
         prompt     = _OFFTOPIC_PROMPT.format(query=query)
-        raw, usage = self._provider.complete(prompt)
+        raw, usage = p.complete(prompt)
         parsed     = _parse_response(raw, [])
         return GenerationResult(
             answer      = parsed["answer"],
@@ -284,7 +349,7 @@ class Generator:
             confidence  = parsed["confidence"],
             token_usage = usage,
             query       = query,
-            model       = self._provider.model_name,
+            model       = p.model_name,
             no_data     = True,
         )
 
@@ -293,8 +358,9 @@ class Generator:
         Builds the RAG consultation prompt, calls the provider, parses the JSON,
         and returns a GenerationResult with token counts attached.
         """
+        p            = self._provider()
         prompt       = build_prompt(query, results)
-        raw, usage   = self._provider.complete(prompt)
+        raw, usage   = p.complete(prompt)
         parsed       = _parse_response(raw, results)
         no_data      = NO_DATA_PHRASE in parsed["answer"].lower()[:120]
 
@@ -304,6 +370,6 @@ class Generator:
             confidence  = parsed["confidence"],
             token_usage = usage,
             query       = query,
-            model       = self._provider.model_name,
+            model       = p.model_name,
             no_data     = no_data,
         )

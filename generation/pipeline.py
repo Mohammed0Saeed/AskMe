@@ -21,20 +21,29 @@ class GenerationPipeline:
         self._generator = Generator()
         self._logger    = AuditLogger()
 
-    def generate_conversational(self, query: str) -> GenerationResult:
+    def generate_conversational(
+        self, query: str,
+        conversation_id: str = "", user_id: str = "", user_name: str = "",
+    ) -> GenerationResult:
         result = self._generator.generate_conversational(query)
-        self._logger.log(result, [])
+        self._logger.log(result, [], conversation_id=conversation_id,
+                         user_id=user_id, user_name=user_name)
         return result
 
-    def generate_offtopic(self, query: str) -> GenerationResult:
+    def generate_offtopic(
+        self, query: str,
+        conversation_id: str = "", user_id: str = "", user_name: str = "",
+    ) -> GenerationResult:
         result = self._generator.generate_offtopic(query)
-        self._logger.log(result, [])
+        self._logger.log(result, [], conversation_id=conversation_id,
+                         user_id=user_id, user_name=user_name)
         return result
 
     def generate(
         self,
         query: str,
         retrieval_results: List[RetrievalResult],
+        conversation_id: str = "", user_id: str = "", user_name: str = "",
     ) -> GenerationResult:
         """
         Generates a cited answer from the provided retrieval results and writes
@@ -44,7 +53,8 @@ class GenerationPipeline:
         not produce a blank log entry that would confuse auditors.
         """
         result = self._generator.generate(query, retrieval_results)
-        self._logger.log(result, retrieval_results)
+        self._logger.log(result, retrieval_results, conversation_id=conversation_id,
+                         user_id=user_id, user_name=user_name)
         logger.info(
             "Generated answer [audit=%s] confidence=%s citations=%d",
             result.audit_id,

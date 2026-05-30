@@ -12,7 +12,9 @@ from collections import Counter
 from auth import UserStore
 from config import GEMINI_MODEL, LLM_PROVIDER, OLLAMA_MODEL, RELEVANCE_THRESHOLD, SECRET_KEY
 from generation import GenerationPipeline
-from generation.audit_logger import read_by_id, read_recent
+from generation import provider_config as _provider_config
+from generation.audit_logger import read_by_id, read_conversation, read_recent
+from generation.generator import ANTHROPIC_MODELS
 from generation.insight_engine import InsightEngine
 from generation.ticket_store import TicketStore
 from ingestion import IngestionPipeline
@@ -28,6 +30,7 @@ app.secret_key = SECRET_KEY
 user_store          = UserStore()
 ingest_pipeline     = IngestionPipeline()
 retrieval_pipeline  = RetrievalPipeline()
+_provider_config.load()          # restore admin-chosen provider before pipeline init
 generation_pipeline = GenerationPipeline()
 ticket_store        = TicketStore()
 insight_engine      = InsightEngine()
@@ -36,16 +39,29 @@ retrieval_pipeline.load_index()
 ALLOWED_EXTENSIONS = {".pdf", ".vtt", ".json", ".html", ".htm"}
 
 # ── Conversational query detection ─────────────────────────────────────────────
-_CONV_STARTERS = {"hi", "hello", "hey", "howdy", "hiya", "yo", "greetings", "sup"}
-_CONV_PHRASES  = {
+_CONV_PHRASES = {
     "how are you", "how r u", "how are u", "hows it going", "how's it going",
     "whats up", "what's up", "what is up",
     "good morning", "good afternoon", "good evening", "good night",
     "nice to meet you", "pleased to meet you", "great to meet you",
     "who are you", "what are you", "what can you do", "what do you do",
-    "thanks", "thank you", "thank u", "cheers", "many thanks", "appreciated",
+    "thanks", "thank you", "thank u", "thx", "ty", "cheers", "many thanks",
+    "appreciated", "much appreciated", "thanks a lot", "thank you so much",
+    "thanks so much", "thanks very much", "thank you very much",
     "bye", "goodbye", "ciao", "see you", "see ya", "farewell", "take care",
+    "good bye", "have a good day", "have a nice day", "talk later", "talk soon",
     "ok", "okay", "got it", "sounds good", "great", "awesome", "cool",
+    "noted", "understood", "perfect", "wonderful", "excellent",
+    "hi", "hello", "hey", "howdy", "hiya", "yo", "greetings", "sup",
+}
+
+# Single words that — when a message is short — flag it as conversational
+_CONV_WORDS = {
+    "hi", "hello", "hey", "howdy", "hiya", "yo", "greetings", "sup",
+    "thanks", "thank", "thx", "ty", "cheers", "appreciated",
+    "bye", "goodbye", "ciao", "farewell",
+    "ok", "okay", "great", "awesome", "cool", "noted", "perfect",
+    "wonderful", "excellent", "understood", "alright", "sure",
 }
 
 def _is_conversational(query: str) -> bool:
@@ -53,10 +69,12 @@ def _is_conversational(query: str) -> bool:
     words = q.split()
     if not words:
         return False
-    if q in _CONV_STARTERS or q in _CONV_PHRASES:
+    # Exact phrase match
+    if q in _CONV_PHRASES:
         return True
-    # Short message starting with a known greeting word (≤ 5 words)
-    return words[0] in _CONV_STARTERS and len(words) <= 5
+    # Short message (≤ 6 words) whose first meaningful word is conversational
+    first = words[0].strip(",.!?;:")
+    return first in _CONV_WORDS and len(words) <= 6
 INGEST_LOG_PATH    = "data/ingest_log.jsonl"
 
 # Roles that are allowed to ingest documents
@@ -370,19 +388,22 @@ def ask():
         is tagged confidential/restricted, directing them to the expert.
       - Experts and admins see no notice.
     """
-    user         = get_current_user()
-    body         = request.get_json(force=True) or {}
-    query        = (body.get("query") or "").strip()
-    top_k        = int(body.get("top_k", 5))
-    access_level = body.get("access_level") or None
-    domain       = (body.get("domain_filter") or "").strip() or None
+    user            = get_current_user()
+    body            = request.get_json(force=True) or {}
+    query           = (body.get("query") or "").strip()
+    top_k           = int(body.get("top_k", 5))
+    access_level    = body.get("access_level") or None
+    domain          = (body.get("domain_filter") or "").strip() or None
+    conversation_id = (body.get("conversation_id") or "").strip()
 
     if not query:
         return jsonify({"error": "Query cannot be empty."}), 400
 
     if _is_conversational(query):
         try:
-            gen = generation_pipeline.generate_conversational(query)
+            gen = generation_pipeline.generate_conversational(
+                query, conversation_id=conversation_id,
+                user_id=user.user_id, user_name=user.name)
             tu  = gen.token_usage
             return jsonify({
                 "query":    query,
@@ -417,7 +438,9 @@ def ask():
             return jsonify({"error": "No relevant documents found."}), 404
 
         if results[0].rerank_score < RELEVANCE_THRESHOLD:
-            gen = generation_pipeline.generate_offtopic(query)
+            gen = generation_pipeline.generate_offtopic(
+                query, conversation_id=conversation_id,
+                user_id=user.user_id, user_name=user.name)
             tu  = gen.token_usage
             return jsonify({
                 "query":    query,
@@ -441,7 +464,10 @@ def ask():
                 "results":  [_result_to_dict(r) for r in results],
             })
 
-        gen = generation_pipeline.generate(query, results)
+        gen = generation_pipeline.generate(
+            query, results,
+            conversation_id=conversation_id,
+            user_id=user.user_id, user_name=user.name)
         tu  = gen.token_usage
 
         # Auto-create a ticket when confidence is LOW so experts can review gaps
@@ -623,6 +649,13 @@ def audit_entry(audit_id: str):
     return jsonify(entry)
 
 
+@app.route("/api/conversations/<conv_id>", methods=["GET"])
+@login_required
+def conversation_detail(conv_id: str):
+    """Returns all audit entries for a conversation, oldest-first."""
+    return jsonify({"entries": read_conversation(conv_id)})
+
+
 @app.route("/api/index/stats", methods=["GET"])
 @login_required
 def index_stats():
@@ -653,11 +686,74 @@ def kb_documents():
 @app.route("/api/config", methods=["GET"])
 @login_required
 def get_config():
-    if LLM_PROVIDER == "ollama":
+    cfg      = _provider_config.get()
+    provider = cfg.get("provider") or LLM_PROVIDER
+    if provider == "anthropic":
+        model = cfg.get("anthropic_model", "claude-sonnet-4-6")
+        return jsonify({"provider": "anthropic", "model": model,
+                        "label": f"Anthropic · {model}"})
+    if provider == "ollama":
         return jsonify({"provider": "ollama", "model": OLLAMA_MODEL,
                         "label": f"Local · {OLLAMA_MODEL}"})
     return jsonify({"provider": "gemini", "model": GEMINI_MODEL,
                     "label": f"Gemini · {GEMINI_MODEL}"})
+
+
+@app.route("/api/admin/model-config", methods=["GET"])
+@admin_required
+def get_model_config():
+    """Returns the active provider config. API key is masked — never returned."""
+    cfg      = _provider_config.get()
+    provider = cfg.get("provider") or LLM_PROVIDER
+    return jsonify({
+        "provider":         provider,
+        "anthropic_model":  cfg.get("anthropic_model", "claude-sonnet-4-6"),
+        "anthropic_key_set": bool(cfg.get("anthropic_api_key", "").strip()),
+        "available_models": ANTHROPIC_MODELS,
+    })
+
+
+@app.route("/api/admin/model-config", methods=["POST"])
+@admin_required
+def set_model_config():
+    """Admin-only: switch LLM provider at runtime. API key stored only on disk (gitignored)."""
+    body     = request.get_json(force=True) or {}
+    provider = (body.get("provider") or "").strip().lower()
+
+    if provider not in ("ollama", "gemini", "anthropic"):
+        return jsonify({"error": "provider must be 'ollama', 'gemini', or 'anthropic'."}), 400
+
+    if provider == "anthropic":
+        api_key = (body.get("anthropic_api_key") or "").strip()
+        model   = (body.get("anthropic_model") or "claude-sonnet-4-6").strip()
+        if model not in ANTHROPIC_MODELS:
+            return jsonify({"error": f"Unknown Anthropic model '{model}'."}), 400
+
+        # If no new key supplied, keep the existing one
+        existing_key = _provider_config.get().get("anthropic_api_key", "")
+        if not api_key:
+            api_key = existing_key
+        if not api_key:
+            return jsonify({"error": "An Anthropic API key is required."}), 400
+
+        _provider_config.save(provider="anthropic",
+                              anthropic_api_key=api_key,
+                              anthropic_model=model)
+    else:
+        # Keep any existing Anthropic key so it isn't wiped when switching back
+        existing_key = _provider_config.get().get("anthropic_api_key", "")
+        existing_model = _provider_config.get().get("anthropic_model", "claude-sonnet-4-6")
+        _provider_config.save(provider=provider,
+                              anthropic_api_key=existing_key,
+                              anthropic_model=existing_model)
+
+    cfg = _provider_config.get()
+    return jsonify({
+        "success":          True,
+        "provider":         cfg.get("provider"),
+        "anthropic_model":  cfg.get("anthropic_model"),
+        "anthropic_key_set": bool(cfg.get("anthropic_api_key", "").strip()),
+    })
 
 
 # ── Ingest from raw text ─────────────────────────────────────────────────────

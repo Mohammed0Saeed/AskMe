@@ -284,6 +284,51 @@
         <div id="clear-kb-feedback"></div>
       </div>
 
+      <!-- Model configuration section -->
+      <div class="admin-section" id="model-config-section">
+        <div class="admin-section-header">
+          <div>
+            <h2 class="panel-title" style="margin:0">Model Configuration</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin:4px 0 0">Switch between the local Ollama model and Anthropic Claude API.</p>
+          </div>
+          <span id="model-config-status" class="stat-pill" style="font-size:12px"></span>
+        </div>
+        <div class="model-config-form" id="model-config-form">
+
+          <div class="field-group" style="max-width:320px">
+            <label for="mc-provider">LLM Provider</label>
+            <select id="mc-provider">
+              <option value="ollama">Local (Ollama)</option>
+              <option value="anthropic">Anthropic Claude API</option>
+            </select>
+          </div>
+
+          <!-- Anthropic-only fields -->
+          <div id="mc-anthropic-fields" class="hidden">
+            <div class="field-group" style="max-width:320px">
+              <label for="mc-model">Claude Model</label>
+              <select id="mc-model">
+                <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Recommended)</option>
+                <option value="claude-opus-4-8">Claude Opus 4.8 (Most capable)</option>
+                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fastest)</option>
+              </select>
+            </div>
+            <div class="field-group" style="max-width:480px">
+              <label for="mc-key">Anthropic API Key</label>
+              <input type="password" id="mc-key" placeholder="sk-ant-…  (leave blank to keep existing key)" autocomplete="off" />
+              <span class="field-hint" id="mc-key-hint"></span>
+            </div>
+          </div>
+
+          <div id="model-config-error" class="error-box hidden" style="max-width:480px;margin-top:8px"></div>
+
+          <button class="btn-primary" id="mc-save-btn" style="font-size:13px;padding:8px 20px;margin-top:4px">
+            <span id="mc-save-label">&#10003; Save</span>
+            <span id="mc-save-spinner" class="spinner hidden"></span>
+          </button>
+        </div>
+      </div>
+
       <!-- Activity monitor section -->
       <div class="admin-section">
         <div class="admin-section-header">
@@ -412,6 +457,25 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       CONVERSATION VIEWER MODAL
+  ══════════════════════════════════════════════════════════ -->
+  <div id="conv-modal-overlay" class="conv-modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="conv-modal">
+      <div class="conv-modal-header">
+        <span class="conv-modal-icon">&#128172;</span>
+        <div class="conv-modal-meta">
+          <span class="conv-modal-title">Conversation</span>
+          <span class="conv-modal-id" id="conv-modal-id"></span>
+        </div>
+        <button class="conv-modal-close" id="conv-modal-close" title="Close">&#10005;</button>
+      </div>
+      <div class="conv-modal-body" id="conv-modal-body">
+        <div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Loading…</p></div>
+      </div>
     </div>
   </div>
 

@@ -3,7 +3,12 @@
    Auth-aware: loads current user on boot, gates UI by role.
 ════════════════════════════════════════════════════════════════ */
 
-let currentUser = null;   // populated by loadCurrentUser() on boot
+let currentUser     = null;   // populated by loadCurrentUser() on boot
+let conversationId  = newConvId();  // reset on "New Chat"
+
+function newConvId() {
+  return ([...Array(12)].map(() => Math.floor(Math.random()*16).toString(16))).join("");
+}
 
 /* ── Boot sequence ───────────────────────────────────────────── */
 (async function boot() {
@@ -232,6 +237,7 @@ askBtn.addEventListener("click", runAsk);
 
 /* New Chat */
 document.getElementById("new-chat-btn")?.addEventListener("click", () => {
+  conversationId = newConvId();
   document.getElementById("chat-messages").innerHTML = `
     <div class="chat-welcome" id="chat-welcome">
       <div class="chat-welcome-icon">&#9670;</div>
@@ -256,6 +262,7 @@ async function runAsk() {
 
   const body = {
     query,
+    conversation_id: conversationId,
     top_k:         parseInt(document.getElementById("s-topk").value) || 5,
     access_level:  document.getElementById("s-access").value  || null,
     domain_filter: document.getElementById("s-domain").value  || null,
@@ -474,16 +481,22 @@ async function loadAuditLog() {
 }
 
 function buildAuditEntry(e, idx = 1) {
-  const div = document.createElement("div");
+  const div  = document.createElement("div");
   div.className = `audit-entry stagger-${Math.min(idx, 10)}`;
   const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : "—";
   const conf = (e.confidence?.level || "LOW").toUpperCase();
   const nCit = (e.citations || []).length;
+  const convBadge = e.conversation_id
+    ? `<span class="audit-conv-badge" title="Conversation ${escapeHtml(e.conversation_id)}">&#128172; ${escapeHtml(e.conversation_id)}</span>`
+    : "";
+  const userLabel = e.user_name ? `<span style="color:var(--text-muted);font-size:11px">&#128100; ${escapeHtml(e.user_name)}</span>` : "";
   div.innerHTML = `
     <div class="audit-entry-header">
       <span class="audit-id">&#9670; ${escapeHtml(e.audit_id)}</span>
       <span class="audit-ts">&#128197; ${ts}</span>
+      ${userLabel}
       <span class="conf-badge conf-${conf}" style="font-size:10px">${conf}</span>
+      ${convBadge}
     </div>
     <div class="audit-entry-body">
       <div class="audit-query">&#9906; ${escapeHtml(e.query || "")}</div>
@@ -492,8 +505,84 @@ function buildAuditEntry(e, idx = 1) {
     <div class="audit-footer">
       ${pill(`${nCit} citation${nCit !== 1 ? "s" : ""}`)}
       ${e.token_usage ? pill(`${(e.token_usage.total_tokens || 0).toLocaleString()} tokens`) : ""}
+      ${e.conversation_id ? `<span style="margin-left:auto;font-size:11px;color:var(--primary)">Click to view conversation &#8599;</span>` : ""}
     </div>`;
+
+  if (e.conversation_id) {
+    div.addEventListener("click", () => openConversationModal(e.conversation_id));
+  }
   return div;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   CONVERSATION MODAL
+════════════════════════════════════════════════════════════════ */
+const convOverlay = document.getElementById("conv-modal-overlay");
+const convBody    = document.getElementById("conv-modal-body");
+const convIdEl    = document.getElementById("conv-modal-id");
+
+document.getElementById("conv-modal-close").addEventListener("click", closeConversationModal);
+convOverlay.addEventListener("click", e => { if (e.target === convOverlay) closeConversationModal(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeConversationModal(); });
+
+function closeConversationModal() {
+  convOverlay.classList.add("hidden");
+}
+
+async function openConversationModal(convId) {
+  convIdEl.textContent   = convId;
+  convBody.innerHTML     = `<div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Loading conversation…</p></div>`;
+  convOverlay.classList.remove("hidden");
+
+  try {
+    const res  = await fetch(`/api/conversations/${encodeURIComponent(convId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load");
+    renderConversationModal(data.entries || []);
+  } catch (err) {
+    convBody.innerHTML = `<div class="error-box">&#9888; ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderConversationModal(entries) {
+  if (!entries.length) {
+    convBody.innerHTML = `<div class="placeholder"><p>No messages found.</p></div>`;
+    return;
+  }
+  convBody.innerHTML = "";
+  entries.forEach((e, i) => {
+    const turn  = document.createElement("div");
+    turn.className = "conv-turn";
+    const ts    = e.timestamp ? new Date(e.timestamp).toLocaleString() : "—";
+    const conf  = (e.confidence?.level || "LOW").toUpperCase();
+    const nCit  = (e.citations || []).length;
+    const citNote = nCit ? `<div class="conv-citations-note">&#128273; ${nCit} citation${nCit !== 1 ? "s" : ""} — see full audit entry for details.</div>` : "";
+
+    turn.innerHTML = `
+      <div class="conv-turn-meta">
+        <span>&#128197; ${escapeHtml(ts)}</span>
+        ${e.user_name ? `<span>&#128100; ${escapeHtml(e.user_name)}</span>` : ""}
+        <span class="conf-badge conf-${conf}" style="font-size:10px">${conf}</span>
+      </div>
+      <div class="conv-bubble-user">${escapeHtml(e.query || "")}</div>
+      <div class="conv-bubble-ai">
+        <div class="conv-bubble-ai-header">
+          <span style="font-size:11px;color:var(--text-muted)">&#9670; AskMe</span>
+        </div>
+        <div class="conv-answer-text">${escapeHtml(e.answer || "")}</div>
+        ${citNote}
+      </div>`;
+
+    if (i < entries.length - 1) {
+      const divider = document.createElement("div");
+      divider.className = "conv-divider";
+      turn.appendChild(divider);
+    }
+    convBody.appendChild(turn);
+  });
+
+  convBody.scrollTop = 0;
 }
 
 
@@ -548,7 +637,92 @@ document.getElementById("save-new-user-btn")?.addEventListener("click", async ()
 });
 
 async function loadAdminPanel() {
-  await Promise.all([loadUsers(), loadActivity()]);
+  await Promise.all([loadUsers(), loadActivity(), loadModelConfig()]);
+}
+
+/* ── Model Configuration ─────────────────────────────────────────── */
+const mcProvider = document.getElementById("mc-provider");
+const mcAnthFields = document.getElementById("mc-anthropic-fields");
+
+mcProvider?.addEventListener("change", () => {
+  mcAnthFields?.classList.toggle("hidden", mcProvider.value !== "anthropic");
+});
+
+document.getElementById("mc-save-btn")?.addEventListener("click", saveModelConfig);
+
+async function loadModelConfig() {
+  try {
+    const res  = await fetch("/api/admin/model-config");
+    if (!res.ok) return;
+    const data = await res.json();
+    applyModelConfig(data);
+  } catch { /* silent */ }
+}
+
+function applyModelConfig(data) {
+  const providerEl = document.getElementById("mc-provider");
+  const modelEl    = document.getElementById("mc-model");
+  const hintEl     = document.getElementById("mc-key-hint");
+  const statusEl   = document.getElementById("model-config-status");
+
+  if (providerEl) providerEl.value = data.provider || "ollama";
+  if (modelEl && data.anthropic_model) modelEl.value = data.anthropic_model;
+
+  mcAnthFields?.classList.toggle("hidden", (data.provider || "ollama") !== "anthropic");
+
+  if (hintEl) {
+    hintEl.textContent = data.anthropic_key_set
+      ? "A key is already saved. Leave blank to keep it."
+      : "No key saved yet.";
+  }
+
+  const labels = { ollama: "Local · Ollama", gemini: "Gemini", anthropic: `Anthropic · ${data.anthropic_model || "claude-sonnet-4-6"}` };
+  if (statusEl) statusEl.textContent = labels[data.provider] || data.provider;
+}
+
+async function saveModelConfig() {
+  const saveBtn   = document.getElementById("mc-save-btn");
+  const saveLabel = document.getElementById("mc-save-label");
+  const saveSpin  = document.getElementById("mc-save-spinner");
+  const errEl     = document.getElementById("model-config-error");
+
+  const provider = document.getElementById("mc-provider")?.value;
+  const model    = document.getElementById("mc-model")?.value;
+  const key      = document.getElementById("mc-key")?.value.trim();
+
+  errEl.classList.add("hidden");
+  saveBtn.disabled  = true;
+  saveLabel.classList.add("hidden");
+  saveSpin.classList.remove("hidden");
+
+  try {
+    const body = { provider };
+    if (provider === "anthropic") {
+      body.anthropic_model   = model;
+      body.anthropic_api_key = key;
+    }
+
+    const res  = await fetch("/api/admin/model-config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.error || "Save failed.";
+      errEl.classList.remove("hidden");
+    } else {
+      applyModelConfig(data);
+      document.getElementById("mc-key").value = "";
+    }
+  } catch {
+    errEl.textContent = "Network error.";
+    errEl.classList.remove("hidden");
+  } finally {
+    saveBtn.disabled = false;
+    saveLabel.classList.remove("hidden");
+    saveSpin.classList.add("hidden");
+  }
 }
 
 async function loadUsers() {
