@@ -184,6 +184,11 @@ class RetrievalPipeline:
         )
         return [reranked[i] for i in idx]
 
+    def clear_index(self) -> None:
+        """Clears all indexed documents from memory and disk."""
+        self._vector_store.clear()
+        self._bm25.clear()
+
     def list_documents(self) -> list:
         """Returns one dict per unique source document with aggregated metadata."""
         import os as _os

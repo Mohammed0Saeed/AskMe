@@ -80,6 +80,15 @@ class BM25Index:
         with open(os.path.join(self._index_dir, "bm25_corpus.pkl"), "wb") as f:
             pickle.dump((self._chunks, self._chunk_ids), f)
 
+    def clear(self) -> None:
+        """Wipes all in-memory state and deletes the persisted corpus file."""
+        self._bm25      = None
+        self._chunks    = []
+        self._chunk_ids = set()
+        path = os.path.join(self._index_dir, "bm25_corpus.pkl")
+        if os.path.exists(path):
+            os.remove(path)
+
     def load(self) -> bool:
         """Loads the chunk corpus from disk and reconstructs BM25Okapi in-memory."""
         path = os.path.join(self._index_dir, "bm25_corpus.pkl")

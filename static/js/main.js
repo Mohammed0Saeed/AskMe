@@ -65,8 +65,6 @@ function applyRoleUI() {
   // Top-K and model info: admins only
   if (role === "admin") {
     document.getElementById("topk-filter")?.classList.remove("hidden");
-  } else {
-    document.getElementById("model-chip")?.classList.add("hidden");
   }
 
   // Domain filter in tickets: only admins see it
@@ -212,40 +210,48 @@ function showIngestError(msg) {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   TAB 2 — ASK
+   TAB 2 — CHAT
 ════════════════════════════════════════════════════════════════ */
-const askBtn          = document.getElementById("ask-btn");
-const askLabel        = document.getElementById("ask-label");
-const askSpinner      = document.getElementById("ask-spinner");
-const searchQuery     = document.getElementById("search-query");
-const askPlaceholder  = document.getElementById("ask-placeholder");
-const askError        = document.getElementById("ask-error");
-const noDataPanel     = document.getElementById("no-data-panel");
-const answerPanel     = document.getElementById("answer-panel");
-const answerText      = document.getElementById("answer-text");
-const citationsSec    = document.getElementById("citations-section");
-const confBadge       = document.getElementById("conf-badge");
-const confReason      = document.getElementById("conf-reason");
-const modelChip       = document.getElementById("model-chip");
-const auditChip       = document.getElementById("audit-chip");
-const evidenceSec     = document.getElementById("evidence-section");
-const evidenceSub     = document.getElementById("evidence-subtitle");
-const searchResults   = document.getElementById("search-results");
-const confNotice      = document.getElementById("confidential-notice");
+const askBtn      = document.getElementById("ask-btn");
+const askLabel    = document.getElementById("ask-label");
+const askSpinner  = document.getElementById("ask-spinner");
+const searchQuery = document.getElementById("search-query");
+const askError    = document.getElementById("ask-error");
 
-searchQuery.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runAsk(); });
+/* Auto-resize textarea */
+searchQuery.addEventListener("input", () => {
+  searchQuery.style.height = "auto";
+  searchQuery.style.height = Math.min(searchQuery.scrollHeight, 160) + "px";
+});
+
+/* Enter = send, Shift+Enter = newline */
+searchQuery.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runAsk(); }
+});
 askBtn.addEventListener("click", runAsk);
+
+/* New Chat */
+document.getElementById("new-chat-btn")?.addEventListener("click", () => {
+  document.getElementById("chat-messages").innerHTML = `
+    <div class="chat-welcome" id="chat-welcome">
+      <div class="chat-welcome-icon">&#9670;</div>
+      <h3 class="chat-welcome-title">How can I help you today?</h3>
+      <p class="chat-welcome-hint">Ask anything about your documents. Every answer shows the source file, page, and author for each claim.</p>
+    </div>`;
+  searchQuery.value = "";
+  searchQuery.style.height = "auto";
+  askError.classList.add("hidden");
+});
 
 async function runAsk() {
   const query = searchQuery.value.trim();
-  if (!query) return;
+  if (!query || askBtn.disabled) return;
 
+  document.getElementById("chat-welcome")?.remove();
   askError.classList.add("hidden");
-  answerPanel.classList.add("hidden");
-  noDataPanel.classList.add("hidden");
-  confNotice.classList.add("hidden");
-  evidenceSec.classList.add("hidden");
-  askPlaceholder.style.display = "none";
+  appendUserMessage(query);
+  searchQuery.value = "";
+  searchQuery.style.height = "auto";
   setAskLoading(true);
 
   const body = {
@@ -258,124 +264,193 @@ async function runAsk() {
   try {
     const res  = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const json = await res.json();
-    if (!res.ok || json.error) { showAskError(json.error || `Error ${res.status}`); return; }
-    renderAskResponse(json);
-  } catch { showAskError("Network error — is the server running?"); }
-  finally   { setAskLoading(false); }
+    if (!res.ok || json.error) { appendAiError(json.error || `Error ${res.status}`); return; }
+    appendAiMessage(json);
+  } catch { appendAiError("Network error — is the server running?"); }
+  finally   { setAskLoading(false); scrollChat(); }
 }
 
-function renderAskResponse(data) {
+function appendUserMessage(text) {
+  const div = document.createElement("div");
+  div.className = "chat-msg chat-msg-user animate-in";
+  div.innerHTML = `<div class="chat-bubble-user">${escapeHtml(text)}</div>`;
+  document.getElementById("chat-messages").appendChild(div);
+  scrollChat();
+}
+
+function appendAiMessage(data) {
+  const msgs  = document.getElementById("chat-messages");
+  const div   = document.createElement("div");
+  div.className = "chat-msg chat-msg-ai animate-in";
+  const mid   = "m" + Date.now();
+
   if (data.no_data) {
-    noDataPanel.classList.remove("hidden");
-    noDataPanel.classList.remove("animate-in");
-    void noDataPanel.offsetWidth;
-    noDataPanel.classList.add("animate-in");
-    if (data.results?.length) renderEvidence(data);
-    return;
+    div.innerHTML = `
+      <div class="chat-bubble-ai">
+        <div class="chat-ai-header">
+          <span style="font-size:18px">&#128270;</span>
+          <span style="font-weight:700;color:#92400e">Nothing found in the knowledge base</span>
+        </div>
+        <div class="chat-answer-body" style="color:var(--text-muted)">
+          ${escapeHtml(data.answer || "The documents currently indexed do not contain relevant information for this question.")}
+        </div>
+      </div>`;
+  } else {
+    const lvl  = (data.confidence?.level || "LOW").toUpperCase();
+    const cits = data.citations || [];
+    const hasEv = data.results?.length > 0;
+
+    div.innerHTML = `
+      <div class="chat-bubble-ai">
+        <div class="chat-ai-header">
+          <span class="conf-badge conf-${lvl}">${lvl}</span>
+          <span class="conf-reason">${escapeHtml(data.confidence?.reason || "")}</span>
+          ${currentUser?.role === "admin" && data.audit_id
+            ? `<span class="audit-chip" style="cursor:default">${escapeHtml(data.audit_id)}</span>` : ""}
+        </div>
+        <div class="chat-answer-body">${renderRefTagsScoped(escapeHtml(data.answer), mid)}</div>
+        ${cits.length ? buildCitationsHtml(cits, mid) : ""}
+        ${data.confidential_notice?.has_restricted ? buildConfNoticeHtml(data.confidential_notice) : ""}
+        ${hasEv ? `
+          <div class="chat-evidence-toggle" data-target="${mid}-ev" data-open="false">
+            &#128269; Show retrieved evidence <span style="font-size:10px">&#9660;</span>
+          </div>
+          <div class="chat-evidence hidden" id="${mid}-ev">${buildEvidenceHtml(data.results)}</div>` : ""}
+      </div>`;
+
+    /* Evidence toggle */
+    div.querySelector(".chat-evidence-toggle")?.addEventListener("click", function () {
+      const open = this.dataset.open === "true";
+      document.getElementById(this.dataset.target).classList.toggle("hidden", open);
+      this.dataset.open = String(!open);
+      this.querySelector("span:last-child").innerHTML = open ? "&#9660;" : "&#9650;";
+    });
+
+    /* Ref-badge → citation highlight within this bubble */
+    div.querySelectorAll(".ref-badge[data-ref]").forEach(b => {
+      b.addEventListener("click", e => {
+        e.preventDefault();
+        const el = div.querySelector(`#cit-${mid}-${b.dataset.ref}`);
+        if (!el) return;
+        div.querySelectorAll(".citation-item").forEach(c => c.classList.remove("highlighted"));
+        el.classList.add("highlighted");
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        setTimeout(() => el.classList.remove("highlighted"), 2500);
+      });
+    });
   }
 
-  const lvl = (data.confidence?.level || "LOW").toUpperCase();
-  confBadge.textContent = lvl + " CONFIDENCE";
-  confBadge.className   = `conf-badge conf-${lvl}`;
-  confReason.textContent = data.confidence?.reason || "";
-
-  if (currentUser?.role === "admin") {
-    const isLocal = (data.model || "").startsWith("ollama");
-    modelChip.textContent = data.model || "—";
-    modelChip.className   = `model-chip${isLocal ? " local" : ""}`;
-  }
-
-  if (data.audit_id) {
-    auditChip.textContent = `Audit: ${data.audit_id}`;
-    auditChip.onclick = () => { document.querySelector('[data-tab="audit"]').click(); loadAuditLog(); };
-  } else { auditChip.textContent = ""; }
-
-  answerText.innerHTML = renderRefTags(escapeHtml(data.answer));
-  renderCitations(data.citations || []);
-
-  answerPanel.classList.remove("hidden");
-  answerPanel.classList.remove("animate-in");
-  void answerPanel.offsetWidth;
-  answerPanel.classList.add("animate-in");
-
-  if (data.confidential_notice?.has_restricted) renderConfidentialNotice(data.confidential_notice);
-  renderEvidence(data);
+  msgs.appendChild(div);
 }
 
-function renderConfidentialNotice(notice) {
-  const domains = (notice.domains || []).join(", ");
-  document.getElementById("conf-notice-text").textContent =
-    `This answer references document(s) classified as confidential in the following domain(s): ${domains}. ` +
-    `Please verify the information with the responsible expert before acting on it.`;
-  const contactsEl = document.getElementById("conf-notice-contacts");
-  contactsEl.innerHTML = (notice.contacts || []).map(c => `
-    <div class="conf-notice-contact">
-      <span class="conf-notice-domain-tag">${escapeHtml(c.domain)}</span>
-      <strong>${escapeHtml(c.name)}</strong>
-      <a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>
-    </div>`).join("");
-  confNotice.classList.remove("hidden");
-  confNotice.classList.remove("animate-in");
-  void confNotice.offsetWidth;
-  confNotice.classList.add("animate-in");
+function appendAiError(msg) {
+  const div = document.createElement("div");
+  div.className = "chat-msg chat-msg-ai animate-in";
+  div.innerHTML = `<div class="chat-bubble-ai is-error"><div class="chat-answer-body" style="color:#b91c1c">&#9888; ${escapeHtml(msg)}</div></div>`;
+  document.getElementById("chat-messages").appendChild(div);
 }
 
-function renderEvidence(data) {
-  if (!data.results?.length) return;
-  searchResults.innerHTML = "";
-  const scores   = data.results.map(r => r.rerank_score);
-  const maxScore = Math.max(...scores), minScore = Math.min(...scores);
-  data.results.forEach((r, i) => searchResults.appendChild(buildResultCard(r, maxScore, minScore, i + 1)));
-  evidenceSub.textContent = `top relevance score: ${scores[0].toFixed(3)}`;
-  evidenceSec.classList.remove("hidden");
-  evidenceSec.classList.remove("animate-in");
-  void evidenceSec.offsetWidth;
-  evidenceSec.classList.add("animate-in");
-}
-
-function renderCitations(citations) {
-  if (!citations.length) { citationsSec.innerHTML = ""; return; }
-  let html = `<div class="citations-title">&#128273; References</div>`;
+function buildCitationsHtml(citations, mid) {
+  let html = `<div class="chat-citations"><div class="citations-title">&#128273; References</div>`;
   for (const c of citations) {
-    const page  = c.page_number != null ? ` · Page ${c.page_number}` : "";
+    const page  = c.page_number != null ? `&#128196; Page ${c.page_number}` : "";
     const quote = c.relevant_quote ? `<blockquote class="citation-quote">"${escapeHtml(c.relevant_quote)}"</blockquote>` : "";
     html += `
-      <div class="citation-item" id="citation-${c.ref_id}">
+      <div class="citation-item" id="cit-${mid}-${c.ref_id}">
         <div class="ref-tag"><span class="ref-tag-badge">${escapeHtml(c.ref_id)}</span></div>
         <div class="citation-meta">
           <strong>${escapeHtml(c.source_file)}</strong>
-          ${page ? `<span class="citation-sep">·</span><span>${page.replace(" · ","")}</span>` : ""}
+          ${page ? `<span class="citation-sep">·</span><span>${page}</span>` : ""}
           <span class="citation-sep">·</span>
           <span class="badge badge-domain">${escapeHtml(c.domain)}</span>
           <span class="badge badge-${c.access_level}">${escapeHtml(c.access_level)}</span>
           <span class="citation-sep">·</span>
           <span>&#128100; ${escapeHtml(c.author || "—")}</span>
-        </div>
-        ${quote}
+        </div>${quote}
       </div>`;
   }
-  citationsSec.innerHTML = html;
+  return html + "</div>";
 }
 
-function highlightCitation(refId) {
-  document.querySelectorAll(".citation-item").forEach(el => el.classList.remove("highlighted"));
-  document.querySelectorAll(".ref-badge").forEach(el => el.classList.remove("highlighted"));
-  const target = document.getElementById(`citation-${refId}`);
-  if (target) { target.classList.add("highlighted"); target.scrollIntoView({ behavior: "smooth", block: "center" }); }
-  document.querySelectorAll(`.ref-badge[href="#citation-${refId}"]`).forEach(b => b.classList.add("highlighted"));
-  setTimeout(() => {
-    if (target) target.classList.remove("highlighted");
-    document.querySelectorAll(".ref-badge").forEach(b => b.classList.remove("highlighted"));
-  }, 2500);
+function buildConfNoticeHtml(notice) {
+  const domains   = (notice.domains || []).join(", ");
+  const contacts  = (notice.contacts || []).map(c => `
+    <div class="conf-notice-contact">
+      <span class="conf-notice-domain-tag">${escapeHtml(c.domain)}</span>
+      <strong>${escapeHtml(c.name)}</strong>
+      <a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>
+    </div>`).join("");
+  return `
+    <div class="chat-conf-notice">
+      <div class="chat-conf-notice-icon">&#128274;</div>
+      <div class="chat-conf-notice-body">
+        <strong>Confidential source(s) referenced.</strong>
+        <p>Domains: ${escapeHtml(domains)}. Verify with the responsible expert before acting on it.</p>
+        <div class="conf-notice-contacts">${contacts}</div>
+      </div>
+    </div>`;
 }
 
-function setAskLoading(on) { askBtn.disabled = on; askLabel.textContent = on ? "Thinking…" : "Ask"; askSpinner.classList.toggle("hidden", !on); }
-function showAskError(msg) { askError.textContent = "Error: " + msg; askError.classList.remove("hidden"); }
+function buildEvidenceHtml(results) {
+  const scores = results.map(r => r.rerank_score);
+  const max = Math.max(...scores), min = Math.min(...scores);
+  return results.map(r => {
+    const m = r.chunk.metadata;
+    const pct = (10 + 90 * ((r.rerank_score - min) / (max - min || 1))).toFixed(1);
+    return `
+      <div class="result-card">
+        <div class="result-card-header">
+          <div class="rank-badge ${r.rank <= 3 ? `rank-${r.rank}` : "rank-n"}">#${r.rank}</div>
+          <span class="chunk-id">${escapeHtml(r.chunk.chunk_id)}</span>
+          <div class="badges">
+            ${m.domain ? `<span class="badge badge-domain">${escapeHtml(m.domain)}</span>` : ""}
+            <span class="badge badge-${m.access_level}">${escapeHtml(m.access_level)}</span>
+          </div>
+        </div>
+        <div class="score-strip">
+          <span class="score-label">Re-rank</span>
+          <div class="rerank-bar-wrap">
+            <div class="rerank-bar-track"><div class="rerank-bar-fill" style="width:${pct}%"></div></div>
+            <span class="score-num">${r.rerank_score.toFixed(3)}</span>
+          </div>
+          <span class="score-chip"><span>Vector</span> ${r.vector_score.toFixed(3)}</span>
+          <span class="score-chip"><span>BM25</span> ${r.bm25_score.toFixed(2)}</span>
+        </div>
+        <div class="result-card-body">
+          <div class="chunk-meta">
+            <span>&#128100; <strong>${escapeHtml(m.author || "—")}</strong></span>
+            <span>&#128197; <strong>${escapeHtml(m.date || "—")}</strong></span>
+            ${m.page_number != null ? `<span>&#128196; page <strong>${m.page_number}</strong></span>` : ""}
+            <span>&#128193; <strong>${escapeHtml(m.source_file || "—")}</strong></span>
+          </div>
+          <div class="chunk-text collapsed">${escapeHtml(r.chunk.content)}</div>
+          <button class="expand-btn" onclick="const t=this.previousElementSibling;const c=t.classList.toggle('collapsed');this.textContent=c?'Show more':'Show less'">Show more</button>
+        </div>
+      </div>`;
+  }).join("");
+}
 
-function renderRefTags(escapedText) {
+function scrollChat() {
+  const el = document.getElementById("chat-messages");
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function setAskLoading(on) {
+  askBtn.disabled = on;
+  askLabel.innerHTML = on ? "" : "&#9658;";
+  askSpinner.classList.toggle("hidden", !on);
+}
+
+/* Scoped ref-tag renderer — uses data-ref so clicks are per-bubble */
+function renderRefTagsScoped(escapedText, mid) {
   return escapedText.replace(/\[REF-(\d+)\]/g, (_, n) =>
-    `<a class="ref-badge" href="#citation-REF-${n}" onclick="highlightCitation('REF-${n}');return false;">[REF-${n}]</a>`
+    `<a class="ref-badge" href="#" data-ref="REF-${n}" onclick="return false;">[REF-${n}]</a>`
   );
+}
+
+/* Legacy global renderRefTags — used by audit log preview */
+function renderRefTags(escapedText) {
+  return escapedText.replace(/\[REF-(\d+)\]/g, (_, n) => `<span class="ref-badge">[REF-${n}]</span>`);
 }
 
 
@@ -429,6 +504,29 @@ const ROLES   = ["user", "expert", "admin"];
 const DOMAINS = ["", "Legal", "Customer Service", "HR", "Finance", "Technology", "Operations", "Marketing", "Data Procurement", "Other"];
 
 document.getElementById("refresh-activity-btn")?.addEventListener("click", loadActivity);
+
+document.getElementById("clear-kb-btn")?.addEventListener("click", async () => {
+  if (!confirm("This will permanently delete all indexed documents. Are you sure?")) return;
+  const btn = document.getElementById("clear-kb-btn");
+  const fb  = document.getElementById("clear-kb-feedback");
+  btn.disabled = true;
+  btn.textContent = "Clearing…";
+  try {
+    const res  = await fetch("/api/admin/kb/clear", { method: "POST" });
+    const data = await res.json();
+    if (res.ok) {
+      fb.innerHTML = `<div class="error-box" style="background:#dcfce7;border-color:#bbf7d0;color:#15803d;margin-top:12px">&#10003; ${escapeHtml(data.message)}</div>`;
+      refreshIndexStatus();
+    } else {
+      fb.innerHTML = `<div class="error-box" style="margin-top:12px">${escapeHtml(data.error || "Failed.")}</div>`;
+    }
+  } catch {
+    fb.innerHTML = `<div class="error-box" style="margin-top:12px">Network error.</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "&#128465; Clear Knowledge Base";
+  }
+});
 document.getElementById("add-user-btn")?.addEventListener("click", () => {
   document.getElementById("add-user-form").classList.toggle("hidden");
 });

@@ -21,6 +21,9 @@ class GenerationPipeline:
         self._generator = Generator()
         self._logger    = AuditLogger()
 
+    def generate_conversational(self, query: str) -> GenerationResult:
+        return self._generator.generate_conversational(query)
+
     def generate(
         self,
         query: str,

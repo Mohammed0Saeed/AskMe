@@ -34,6 +34,29 @@ insight_engine      = InsightEngine()
 retrieval_pipeline.load_index()
 
 ALLOWED_EXTENSIONS = {".pdf", ".vtt", ".json", ".html", ".htm"}
+
+# ── Conversational query detection ─────────────────────────────────────────────
+_CONV_STARTERS = {"hi", "hello", "hey", "howdy", "hiya", "yo", "greetings", "sup"}
+_CONV_PHRASES  = {
+    "how are you", "how r u", "how are u", "hows it going", "how's it going",
+    "whats up", "what's up", "what is up",
+    "good morning", "good afternoon", "good evening", "good night",
+    "nice to meet you", "pleased to meet you", "great to meet you",
+    "who are you", "what are you", "what can you do", "what do you do",
+    "thanks", "thank you", "thank u", "cheers", "many thanks", "appreciated",
+    "bye", "goodbye", "ciao", "see you", "see ya", "farewell", "take care",
+    "ok", "okay", "got it", "sounds good", "great", "awesome", "cool",
+}
+
+def _is_conversational(query: str) -> bool:
+    q     = query.strip().lower().rstrip("!?.")
+    words = q.split()
+    if not words:
+        return False
+    if q in _CONV_STARTERS or q in _CONV_PHRASES:
+        return True
+    # Short message starting with a known greeting word (≤ 5 words)
+    return words[0] in _CONV_STARTERS and len(words) <= 5
 INGEST_LOG_PATH    = "data/ingest_log.jsonl"
 
 # Roles that are allowed to ingest documents
@@ -356,6 +379,31 @@ def ask():
 
     if not query:
         return jsonify({"error": "Query cannot be empty."}), 400
+
+    if _is_conversational(query):
+        try:
+            gen = generation_pipeline.generate_conversational(query)
+            tu  = gen.token_usage
+            return jsonify({
+                "query":    query,
+                "no_data":  False,
+                "answer":   gen.answer,
+                "citations": [],
+                "confidence": {"level": "HIGH", "score": 1.0, "reason": "Conversational response."},
+                "token_usage": {
+                    "prompt_tokens":     tu.prompt_tokens     if tu else 0,
+                    "completion_tokens": tu.completion_tokens if tu else 0,
+                    "total_tokens":      tu.total_tokens      if tu else 0,
+                    "estimated":         tu.estimated         if tu else True,
+                },
+                "confidential_notice": None,
+                "audit_id": None,
+                "model":    gen.model,
+                "results":  [],
+            })
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
     if retrieval_pipeline.total_chunks == 0:
         return jsonify({"error": "Index is empty. Please contact an admin or expert."}), 400
 
@@ -568,6 +616,17 @@ def audit_entry(audit_id: str):
 @login_required
 def index_stats():
     return jsonify({"total_chunks": retrieval_pipeline.total_chunks})
+
+
+@app.route("/api/admin/kb/clear", methods=["POST"])
+@admin_required
+def admin_clear_kb():
+    """Admin-only: wipes all indexed documents from memory and disk."""
+    retrieval_pipeline.clear_index()
+    ingest_log = INGEST_LOG_PATH
+    if os.path.exists(ingest_log):
+        os.remove(ingest_log)
+    return jsonify({"success": True, "message": "Knowledge base cleared."})
 
 
 @app.route("/api/kb/documents", methods=["GET"])

@@ -86,6 +86,16 @@ class VectorStore:
             self._chunks, self._chunk_ids = pickle.load(f)
         return True
 
+    def clear(self) -> None:
+        """Wipes all in-memory state and deletes the persisted index files."""
+        self._index     = faiss.IndexFlatIP(EMBEDDING_DIM)
+        self._chunks    = []
+        self._chunk_ids = set()
+        for name in ("faiss.bin", "chunks.pkl"):
+            path = os.path.join(self._index_dir, name)
+            if os.path.exists(path):
+                os.remove(path)
+
     @property
     def size(self) -> int:
         return len(self._chunks)

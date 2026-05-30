@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 
 NO_DATA_PHRASE = "i don't know, please ask your supervisor"
 
+_CONVERSATIONAL_PROMPT = """\
+You are AskMe, a professional and friendly internal knowledge assistant for SIX Group.
+The user has sent a conversational message — not a document question.
+Respond naturally, warmly, and concisely in 1-3 sentences.
+If asked who you are: you are AskMe, SIX Group's internal knowledge assistant — \
+you help employees find answers from internal documents, policies, and procedures.
+If asked what you can do: explain you answer questions grounded in internal documents \
+with full citations showing the source, page, and author of every claim.
+
+Respond with VALID JSON ONLY — no markdown, no code fences:
+{{"answer": "<your friendly response>", "citations": [], "confidence": {{"level": "HIGH", "score": 1.0, "reason": "Conversational response."}}}}
+
+Message: {query}"""
+
 
 # ── Provider abstraction ──────────────────────────────────────────────────────
 
@@ -226,6 +240,21 @@ class Generator:
     def __init__(self) -> None:
         self._provider = _get_provider()
         logger.info("LLM provider: %s", self._provider.model_name)
+
+    def generate_conversational(self, query: str) -> GenerationResult:
+        """Handles greetings and simple conversational messages without retrieval."""
+        prompt     = _CONVERSATIONAL_PROMPT.format(query=query)
+        raw, usage = self._provider.complete(prompt)
+        parsed     = _parse_response(raw, [])
+        return GenerationResult(
+            answer     = parsed["answer"],
+            citations  = [],
+            confidence = parsed["confidence"],
+            token_usage= usage,
+            query      = query,
+            model      = self._provider.model_name,
+            no_data    = False,
+        )
 
     def generate(self, query: str, results: List[RetrievalResult]) -> GenerationResult:
         """

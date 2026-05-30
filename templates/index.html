@@ -150,22 +150,18 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
-       TAB 2 — ASK
+       TAB 2 — CHAT
   ══════════════════════════════════════════════════════════ -->
   <div id="tab-search" class="tab-page active">
-    <div class="ask-layout">
-    <div class="ask-main">
+    <div class="chat-layout">
 
-      <div class="ask-query-panel">
-        <h2 class="panel-title">Ask a Question</h2>
-        <textarea id="search-query" class="search-textarea"
-                  placeholder="Ask a question about your ingested documents… (Ctrl+Enter to submit)"
-                  rows="3"></textarea>
-        <div class="search-filters">
+      <!-- Filter bar -->
+      <div class="chat-filters-bar">
+        <div class="chat-filter-controls">
           <div class="filter-item">
-            <label for="s-access">Access level</label>
+            <label for="s-access">Access</label>
             <select id="s-access">
-              <option value="">All levels</option>
+              <option value="">All</option>
               <option value="public">Public</option>
               <option value="internal">Internal</option>
               <option value="confidential">Confidential</option>
@@ -173,7 +169,7 @@
             </select>
           </div>
           <div class="filter-item">
-            <label for="s-domain">Domain filter</label>
+            <label for="s-domain">Domain</label>
             <select id="s-domain">
               <option value="">All domains</option>
               <option value="Legal">Legal</option>
@@ -188,63 +184,37 @@
             </select>
           </div>
           <div class="filter-item hidden" id="topk-filter">
-            <label for="s-topk">Top-K chunks</label>
-            <input type="number" id="s-topk" value="5" min="1" max="20" style="width:72px" />
+            <label for="s-topk">Top-K</label>
+            <input type="number" id="s-topk" value="5" min="1" max="20" style="width:60px" />
           </div>
-          <button class="btn-primary btn-ask" id="ask-btn">
-            <span id="ask-label">Ask</span>
+          <button class="btn-secondary" id="new-chat-btn">&#43; New Chat</button>
+        </div>
+      </div>
+
+      <!-- Scrollable message list -->
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-welcome" id="chat-welcome">
+          <div class="chat-welcome-icon">&#9670;</div>
+          <h3 class="chat-welcome-title">How can I help you today?</h3>
+          <p class="chat-welcome-hint">Ask anything about your documents. Every answer shows the source file, page, and author for each claim. You can continue the conversation with follow-up questions.</p>
+        </div>
+      </div>
+
+      <!-- Fixed input bar -->
+      <div class="chat-input-area">
+        <div class="chat-input-wrap">
+          <textarea id="search-query" class="chat-textarea"
+                    placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+                    rows="1"></textarea>
+          <button class="chat-send-btn" id="ask-btn" title="Send">
+            <span id="ask-label">&#9658;</span>
             <span id="ask-spinner" class="spinner hidden"></span>
           </button>
         </div>
+        <div id="ask-error" class="error-box hidden" style="margin-top:8px"></div>
       </div>
 
-      <!-- Confidential notice (user role only) -->
-      <div id="confidential-notice" class="confidential-notice hidden">
-        <div class="conf-notice-icon">&#128274;</div>
-        <div class="conf-notice-body">
-          <strong>Confidential source(s) referenced.</strong>
-          <p id="conf-notice-text"></p>
-          <div id="conf-notice-contacts" class="conf-notice-contacts"></div>
-        </div>
-      </div>
-
-      <!-- No-data panel -->
-      <div id="no-data-panel" class="no-data-panel hidden">
-        <div class="no-data-icon">&#128270;</div>
-        <h3 class="no-data-title">Nothing in my database would help me to assist in this matter.</h3>
-        <p class="no-data-hint">The documents currently indexed do not contain relevant information. Try rephrasing, adjusting the domain filter, or asking an expert to ingest additional documents.</p>
-      </div>
-
-      <!-- Answer panel -->
-      <div id="answer-panel" class="answer-panel hidden">
-        <div class="answer-header">
-          <h3 class="answer-title">&#9670; Answer</h3>
-          <span id="conf-badge" class="conf-badge">—</span>
-          <span id="conf-reason" class="conf-reason"></span>
-          <span id="model-chip" class="model-chip hidden"></span>
-          <span class="audit-chip" id="audit-chip"></span>
-        </div>
-        <div id="answer-text" class="answer-text"></div>
-        <div class="citations-section" id="citations-section"></div>
-      </div>
-
-      <div id="ask-error" class="error-box hidden"></div>
-
-      <div id="evidence-section" class="evidence-section hidden">
-        <div class="evidence-header">
-          <h3 class="evidence-title">&#128269; Retrieved Evidence</h3>
-          <span class="evidence-subtitle" id="evidence-subtitle"></span>
-        </div>
-        <div id="search-results" class="chunks-list"></div>
-      </div>
-
-      <div id="ask-placeholder" class="placeholder">
-        <div class="placeholder-icon">&#9906;</div>
-        <p>Enter a question above. The answer will show which file, page, and author each claim comes from.</p>
-      </div>
-
-    </div><!-- /.ask-main -->
-    </div><!-- /.ask-layout -->
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════
@@ -300,6 +270,18 @@
             <tbody id="users-tbody"></tbody>
           </table>
         </div>
+      </div>
+
+      <!-- Knowledge base management -->
+      <div class="admin-section">
+        <div class="admin-section-header">
+          <div>
+            <h2 class="panel-title" style="margin:0">Knowledge Base</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin:4px 0 0">Permanently removes all indexed documents. This cannot be undone.</p>
+          </div>
+          <button class="btn-secondary" id="clear-kb-btn" style="color:#dc2626;border-color:#fecaca">&#128465; Clear Knowledge Base</button>
+        </div>
+        <div id="clear-kb-feedback"></div>
       </div>
 
       <!-- Activity monitor section -->
