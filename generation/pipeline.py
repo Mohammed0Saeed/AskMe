@@ -22,7 +22,14 @@ class GenerationPipeline:
         self._logger    = AuditLogger()
 
     def generate_conversational(self, query: str) -> GenerationResult:
-        return self._generator.generate_conversational(query)
+        result = self._generator.generate_conversational(query)
+        self._logger.log(result, [])
+        return result
+
+    def generate_offtopic(self, query: str) -> GenerationResult:
+        result = self._generator.generate_offtopic(query)
+        self._logger.log(result, [])
+        return result
 
     def generate(
         self,

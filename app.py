@@ -397,7 +397,7 @@ def ask():
                     "estimated":         tu.estimated         if tu else True,
                 },
                 "confidential_notice": None,
-                "audit_id": None,
+                "audit_id": gen.audit_id,
                 "model":    gen.model,
                 "results":  [],
             })
@@ -417,17 +417,28 @@ def ask():
             return jsonify({"error": "No relevant documents found."}), 404
 
         if results[0].rerank_score < RELEVANCE_THRESHOLD:
+            gen = generation_pipeline.generate_offtopic(query)
+            tu  = gen.token_usage
             return jsonify({
-                "query": query, "no_data": True,
-                "answer": "I don't know, please ask your supervisor.",
+                "query":    query,
+                "no_data":  True,
+                "answer":   gen.answer,
                 "citations": [],
-                "confidence": {"level": "LOW", "score": 0.0,
-                               "reason": "Retrieved documents are not relevant to this question."},
-                "token_usage": {"prompt_tokens": 0, "completion_tokens": 0,
-                                "total_tokens": 0, "estimated": True},
+                "confidence": {
+                    "level":  gen.confidence.level,
+                    "score":  gen.confidence.score,
+                    "reason": gen.confidence.reason,
+                },
+                "token_usage": {
+                    "prompt_tokens":     tu.prompt_tokens     if tu else 0,
+                    "completion_tokens": tu.completion_tokens if tu else 0,
+                    "total_tokens":      tu.total_tokens      if tu else 0,
+                    "estimated":         tu.estimated         if tu else True,
+                },
                 "confidential_notice": None,
-                "audit_id": None, "model": provider_label,
-                "results": [_result_to_dict(r) for r in results],
+                "audit_id": gen.audit_id,
+                "model":    gen.model,
+                "results":  [_result_to_dict(r) for r in results],
             })
 
         gen = generation_pipeline.generate(query, results)

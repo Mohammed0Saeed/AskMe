@@ -33,6 +33,23 @@ Respond with VALID JSON ONLY — no markdown, no code fences:
 
 Message: {query}"""
 
+_OFFTOPIC_PROMPT = """\
+You are AskMe, a professional internal knowledge assistant for SIX Group.
+The user has asked a question that is outside the scope of SIX Group's internal \
+knowledge base — the retrieved documents are not relevant to this query.
+
+Write a polite, professional response (2-3 sentences) that:
+1. Acknowledges the question briefly.
+2. Explains that you can only answer questions grounded in SIX Group's internal \
+documents, policies, and procedures.
+3. Invites them to ask something related to SIX Group topics or to contact their \
+supervisor for general questions.
+
+Respond with VALID JSON ONLY — no markdown, no code fences:
+{{"answer": "<your polite response>", "citations": [], "confidence": {{"level": "LOW", "score": 0.0, "reason": "Question is outside the scope of the internal knowledge base."}}}}
+
+User question: {query}"""
+
 
 # ── Provider abstraction ──────────────────────────────────────────────────────
 
@@ -247,13 +264,28 @@ class Generator:
         raw, usage = self._provider.complete(prompt)
         parsed     = _parse_response(raw, [])
         return GenerationResult(
-            answer     = parsed["answer"],
-            citations  = [],
-            confidence = parsed["confidence"],
-            token_usage= usage,
-            query      = query,
-            model      = self._provider.model_name,
-            no_data    = False,
+            answer      = parsed["answer"],
+            citations   = [],
+            confidence  = parsed["confidence"],
+            token_usage = usage,
+            query       = query,
+            model       = self._provider.model_name,
+            no_data     = False,
+        )
+
+    def generate_offtopic(self, query: str) -> GenerationResult:
+        """Handles questions that fall outside the scope of the knowledge base."""
+        prompt     = _OFFTOPIC_PROMPT.format(query=query)
+        raw, usage = self._provider.complete(prompt)
+        parsed     = _parse_response(raw, [])
+        return GenerationResult(
+            answer      = parsed["answer"],
+            citations   = [],
+            confidence  = parsed["confidence"],
+            token_usage = usage,
+            query       = query,
+            model       = self._provider.model_name,
+            no_data     = True,
         )
 
     def generate(self, query: str, results: List[RetrievalResult]) -> GenerationResult:

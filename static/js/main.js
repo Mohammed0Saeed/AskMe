@@ -1061,7 +1061,7 @@ function renderChartStats(dist, total) {
 
 function renderDomainChart(byDomain) {
   const ctx    = document.getElementById("domain-chart").getContext("2d");
-  const labels = Object.keys(byDomain);
+  const labels = Object.keys(byDomain).filter(d => d.toLowerCase() !== "unknown");
   if (domainChartInstance) domainChartInstance.destroy();
   domainChartInstance = new Chart(ctx, {
     type: "bar",
