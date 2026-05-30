@@ -18,6 +18,18 @@ CHUNK_OVERLAP: int = 64
 # --- Access levels used across the system ---
 ACCESS_LEVELS = ["public", "internal", "confidential", "restricted"]
 
+# --- Diversity-aware selection (retrieval top-K) ---------------------------------
+# The cross-encoder ranks each chunk independently, so the top results often
+# cluster as near-duplicates from one document.  After re-ranking a wider pool we
+# re-select the final top-K with Maximal Marginal Relevance + an optional per-source
+# quota, so the LLM sees evidence spread across sources instead of redundant hits.
+#   ENABLE_DIVERSITY=false  → exact legacy behaviour (plain rerank top-K)
+#   MMR_LAMBDA=1.0          → diversity off (relevance only), 0.0 → diversity only
+ENABLE_DIVERSITY: bool = os.getenv("ENABLE_DIVERSITY", "true").lower() == "true"
+DIVERSITY_POOL:   int   = int(os.getenv("DIVERSITY_POOL", "15"))   # rerank width before selecting
+MMR_LAMBDA:       float = float(os.getenv("MMR_LAMBDA", "0.7"))    # relevance ↔ diversity balance
+MAX_PER_SOURCE:   int   = int(os.getenv("MAX_PER_SOURCE", "2"))    # max chunks per source_file
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM Provider switch
 # Set LLM_PROVIDER=ollama in .env to run fully offline with your local GPU.

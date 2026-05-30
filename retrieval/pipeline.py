@@ -1,8 +1,10 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+from config import DIVERSITY_POOL, ENABLE_DIVERSITY, MAX_PER_SOURCE, MMR_LAMBDA
 from ingestion.models import DocumentChunk
 from retrieval.bm25_index import BM25Index
+from retrieval.diversity import mmr_select
 from retrieval.embedder import Embedder
 from retrieval.hybrid_search import reciprocal_rank_fusion
 from retrieval.models import RetrievalResult
@@ -126,8 +128,13 @@ class RetrievalPipeline:
         if not fused:
             return []
 
-        # ── Step 7: cross-encoder re-rank ─────────────────────────
-        reranked = self._reranker.rerank(query, fused, top_k=top_k)
+        # ── Step 7: cross-encoder re-rank (wide) + diversity select ─
+        # Re-rank a wider pool than we need, then re-select the final top_k for
+        # relevance AND source diversity so the LLM is not handed near-duplicate
+        # chunks from a single document.  With diversity disabled this collapses
+        # to the legacy behaviour (rerank straight to top_k).
+        reranked = self._reranker.rerank(query, fused, top_k=DIVERSITY_POOL)
+        reranked = self._select_diverse(reranked, top_k)
 
         # ── Step 8: build RetrievalResult objects ─────────────────
         # Build fast lookup dicts so we don't O(N²) scan for each score
@@ -147,6 +154,55 @@ class RetrievalPipeline:
             ))
 
         return results
+
+    def _select_diverse(
+        self,
+        reranked: List[Tuple[float, DocumentChunk]],
+        top_k: int,
+    ) -> List[Tuple[float, DocumentChunk]]:
+        """
+        Re-selects the final top_k from a wider reranked pool using Maximal
+        Marginal Relevance plus a per-source quota.  Falls back to a plain
+        top_k slice when diversity is disabled or the pool is already small —
+        in which case behaviour is byte-for-byte identical to legacy retrieval.
+        Chunk embeddings are computed on the small candidate set only (≤ pool
+        size), so the added cost is one tiny embedding batch per query.
+        """
+        if not ENABLE_DIVERSITY or len(reranked) <= top_k:
+            return reranked[:top_k]
+
+        scores  = [s for s, _ in reranked]
+        chunks  = [c for _, c in reranked]
+        embs    = self._embedder.embed_documents([c.content for c in chunks])
+        sources = [c.metadata.source_file for c in chunks]
+
+        idx = mmr_select(
+            scores, embs, top_k,
+            lambda_=MMR_LAMBDA,
+            sources=sources,
+            max_per_source=MAX_PER_SOURCE,
+        )
+        return [reranked[i] for i in idx]
+
+    def list_documents(self) -> list:
+        """Returns one dict per unique source document with aggregated metadata."""
+        import os as _os
+        seen: dict = {}
+        for chunk in self._vector_store._chunks:
+            sf = _os.path.basename(chunk.metadata.source_file) or "Unknown"
+            if sf not in seen:
+                seen[sf] = {
+                    "source_file":   sf,
+                    "title":         chunk.metadata.title or sf,
+                    "domain":        chunk.metadata.domain or "Unknown",
+                    "access_level":  chunk.metadata.access_level,
+                    "source_system": chunk.metadata.source_system,
+                    "author":        chunk.metadata.author or "—",
+                    "date":          chunk.metadata.date or "—",
+                    "chunk_count":   0,
+                }
+            seen[sf]["chunk_count"] += 1
+        return sorted(seen.values(), key=lambda d: d["domain"])
 
     @property
     def total_chunks(self) -> int:

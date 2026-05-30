@@ -10,7 +10,6 @@ let currentUser = null;   // populated by loadCurrentUser() on boot
   await loadCurrentUser();
   applyRoleUI();
   refreshIndexStatus();
-  loadProviderBadge();
 })();
 
 async function loadCurrentUser() {
@@ -56,6 +55,25 @@ function applyRoleUI() {
     adminTab.classList.remove("hidden");
   }
 
+  // Tickets + Insights + KB: experts and admins
+  if (role === "expert" || role === "admin") {
+    document.getElementById("tab-btn-tickets").classList.remove("hidden");
+    document.getElementById("tab-btn-insights").classList.remove("hidden");
+    document.getElementById("tab-btn-kb").classList.remove("hidden");
+  }
+
+  // Top-K and model info: admins only
+  if (role === "admin") {
+    document.getElementById("topk-filter")?.classList.remove("hidden");
+  } else {
+    document.getElementById("model-chip")?.classList.add("hidden");
+  }
+
+  // Domain filter in tickets: only admins see it
+  if (role === "admin") {
+    document.getElementById("ticket-domain-filter").classList.remove("hidden");
+  }
+
   // Expert domain lock: show domain notice and lock domain input
   if (role === "expert" && currentUser.domain) {
     const notice = document.getElementById("expert-domain-notice");
@@ -65,8 +83,8 @@ function applyRoleUI() {
     const domainInput = document.getElementById("domain");
     if (domainInput) {
       domainInput.value    = currentUser.domain;
-      domainInput.readOnly = true;
-      domainInput.style.background = "#f0fdf4";
+      domainInput.disabled = true;
+      domainInput.style.opacity = ".7";
     }
     // Hide the auto-detect button since domain is fixed
     const autoBtn = document.getElementById("auto-btn");
@@ -93,68 +111,20 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     const page = document.getElementById("tab-" + target);
     page.classList.remove("hidden");
     page.classList.add("active");
-    if (target === "audit") loadAuditLog();
-    if (target === "admin") loadAdminPanel();
+    if (target === "audit")    loadAuditLog();
+    if (target === "admin")    loadAdminPanel();
+    if (target === "tickets")  loadTickets();
+    if (target === "insights") loadInsights();
+    if (target === "kb")       loadKBExplorer();
   });
 });
 
-/* ── Provider badge + index status ──────────────────────────── */
-const indexStatus   = document.getElementById("index-status");
-const providerBadge = document.getElementById("provider-badge");
-
+/* ── Index status (background keep-alive only) ───────────────── */
 async function refreshIndexStatus() {
-  try {
-    const d = await (await fetch("/api/index/stats")).json();
-    const n = d.total_chunks || 0;
-    indexStatus.textContent = n > 0 ? `${n} chunks indexed` : "Index empty";
-    indexStatus.classList.toggle("has-data", n > 0);
-  } catch { indexStatus.textContent = "—"; }
-}
-
-async function loadProviderBadge() {
-  try {
-    const d = await (await fetch("/api/config")).json();
-    providerBadge.textContent = d.label || d.provider;
-    providerBadge.classList.toggle("local",  d.provider === "ollama");
-    providerBadge.classList.toggle("gemini", d.provider === "gemini");
-    if (tokenModelName) tokenModelName.textContent = d.model || d.provider;
-  } catch { providerBadge.textContent = "—"; }
+  try { await fetch("/api/index/stats"); } catch { /* silent */ }
 }
 
 
-/* ═══════════════════════════════════════════════════════════════
-   TOKEN COUNTER
-════════════════════════════════════════════════════════════════ */
-let sessionQueries = 0;
-let sessionTokens  = 0;
-
-const barPrompt      = document.getElementById("bar-prompt");
-const barCompletion  = document.getElementById("bar-completion");
-const cntPrompt      = document.getElementById("cnt-prompt");
-const cntCompletion  = document.getElementById("cnt-completion");
-const cntTotal       = document.getElementById("cnt-total");
-const cntEstimated   = document.getElementById("cnt-estimated");
-const sessQueries    = document.getElementById("sess-queries");
-const sessTotal      = document.getElementById("sess-total");
-const sessAvg        = document.getElementById("sess-avg");
-const tokenModelName = document.getElementById("token-model-name");
-
-function updateTokenCounter(usage, model) {
-  if (!usage) return;
-  const p = usage.prompt_tokens, c = usage.completion_tokens, t = usage.total_tokens;
-  const maxBar = Math.max(p, c, 1);
-  barPrompt.style.width     = `${(p / maxBar * 100).toFixed(1)}%`;
-  barCompletion.style.width = `${(c / maxBar * 100).toFixed(1)}%`;
-  cntPrompt.textContent     = p.toLocaleString();
-  cntCompletion.textContent = c.toLocaleString();
-  cntTotal.textContent      = t.toLocaleString();
-  cntEstimated.classList.toggle("hidden", !usage.estimated);
-  sessionQueries += 1; sessionTokens += t;
-  sessQueries.textContent = sessionQueries;
-  sessTotal.textContent   = sessionTokens.toLocaleString();
-  sessAvg.textContent     = Math.round(sessionTokens / sessionQueries).toLocaleString();
-  if (model) tokenModelName.textContent = model;
-}
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -185,7 +155,6 @@ if (autoBtn) autoBtn.addEventListener("click", () => {
   const active = autoBtn.classList.toggle("active");
   domainInput.value    = "";
   domainInput.disabled = active;
-  domainInput.placeholder = active ? "Gemini will detect automatically" : "e.g. Legal, Finance, HR…";
 });
 
 if (dropzone) {
@@ -228,7 +197,6 @@ function renderIngestResults(data) {
   const domains = [...new Set(data.chunks.map(c => c.metadata.domain).filter(Boolean))];
   const systems = [...new Set(data.chunks.map(c => c.metadata.source_system))];
   statsBar.innerHTML = [
-    pill(`${data.total_chunks} chunks`), pill(`+${data.newly_indexed} indexed`),
     ...domains.map(d => pill(d)), ...systems.map(s => pill(s)),
   ].join("");
   data.chunks.forEach((c, i) => chunksList.appendChild(buildChunkCard(c, i + 1)));
@@ -284,7 +252,7 @@ async function runAsk() {
     query,
     top_k:         parseInt(document.getElementById("s-topk").value) || 5,
     access_level:  document.getElementById("s-access").value  || null,
-    domain_filter: document.getElementById("s-domain").value.trim() || null,
+    domain_filter: document.getElementById("s-domain").value  || null,
   };
 
   try {
@@ -297,65 +265,59 @@ async function runAsk() {
 }
 
 function renderAskResponse(data) {
-  updateTokenCounter(data.token_usage, data.model);
-
   if (data.no_data) {
     noDataPanel.classList.remove("hidden");
+    noDataPanel.classList.remove("animate-in");
+    void noDataPanel.offsetWidth;
+    noDataPanel.classList.add("animate-in");
     if (data.results?.length) renderEvidence(data);
     return;
   }
 
-  // Confidence
   const lvl = (data.confidence?.level || "LOW").toUpperCase();
   confBadge.textContent = lvl + " CONFIDENCE";
   confBadge.className   = `conf-badge conf-${lvl}`;
   confReason.textContent = data.confidence?.reason || "";
 
-  // Model chip
-  const isLocal = (data.model || "").startsWith("ollama");
-  modelChip.textContent = data.model || "—";
-  modelChip.className   = `model-chip${isLocal ? " local" : ""}`;
+  if (currentUser?.role === "admin") {
+    const isLocal = (data.model || "").startsWith("ollama");
+    modelChip.textContent = data.model || "—";
+    modelChip.className   = `model-chip${isLocal ? " local" : ""}`;
+  }
 
-  // Audit chip
   if (data.audit_id) {
-    auditChip.textContent  = `Audit: ${data.audit_id}`;
+    auditChip.textContent = `Audit: ${data.audit_id}`;
     auditChip.onclick = () => { document.querySelector('[data-tab="audit"]').click(); loadAuditLog(); };
   } else { auditChip.textContent = ""; }
 
-  // Answer text
   answerText.innerHTML = renderRefTags(escapeHtml(data.answer));
-
-  // Citations
   renderCitations(data.citations || []);
 
   answerPanel.classList.remove("hidden");
+  answerPanel.classList.remove("animate-in");
+  void answerPanel.offsetWidth;
+  answerPanel.classList.add("animate-in");
 
-  // Confidential notice (only for user role — backend also enforces this)
-  if (data.confidential_notice?.has_restricted) {
-    renderConfidentialNotice(data.confidential_notice);
-  }
-
+  if (data.confidential_notice?.has_restricted) renderConfidentialNotice(data.confidential_notice);
   renderEvidence(data);
 }
 
 function renderConfidentialNotice(notice) {
-  /* Shows a yellow notice with expert contacts when a regular user receives
-     an answer that draws from confidential or restricted documents. */
-  const domains   = (notice.domains || []).join(", ");
+  const domains = (notice.domains || []).join(", ");
   document.getElementById("conf-notice-text").textContent =
     `This answer references document(s) classified as confidential in the following domain(s): ${domains}. ` +
     `Please verify the information with the responsible expert before acting on it.`;
-
   const contactsEl = document.getElementById("conf-notice-contacts");
   contactsEl.innerHTML = (notice.contacts || []).map(c => `
     <div class="conf-notice-contact">
       <span class="conf-notice-domain-tag">${escapeHtml(c.domain)}</span>
       <strong>${escapeHtml(c.name)}</strong>
       <a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>
-    </div>
-  `).join("");
-
+    </div>`).join("");
   confNotice.classList.remove("hidden");
+  confNotice.classList.remove("animate-in");
+  void confNotice.offsetWidth;
+  confNotice.classList.add("animate-in");
 }
 
 function renderEvidence(data) {
@@ -363,9 +325,12 @@ function renderEvidence(data) {
   searchResults.innerHTML = "";
   const scores   = data.results.map(r => r.rerank_score);
   const maxScore = Math.max(...scores), minScore = Math.min(...scores);
-  data.results.forEach(r => searchResults.appendChild(buildResultCard(r, maxScore, minScore)));
-  evidenceSub.textContent = `${data.results.length} chunk${data.results.length !== 1 ? "s" : ""} · top score: ${scores[0].toFixed(3)}`;
+  data.results.forEach((r, i) => searchResults.appendChild(buildResultCard(r, maxScore, minScore, i + 1)));
+  evidenceSub.textContent = `top relevance score: ${scores[0].toFixed(3)}`;
   evidenceSec.classList.remove("hidden");
+  evidenceSec.classList.remove("animate-in");
+  void evidenceSec.offsetWidth;
+  evidenceSec.classList.add("animate-in");
 }
 
 function renderCitations(citations) {
@@ -379,7 +344,7 @@ function renderCitations(citations) {
         <div class="ref-tag"><span class="ref-tag-badge">${escapeHtml(c.ref_id)}</span></div>
         <div class="citation-meta">
           <strong>${escapeHtml(c.source_file)}</strong>
-          ${page ? `<span class="citation-sep">·</span><span>${page.replace(' · ','')}</span>` : ""}
+          ${page ? `<span class="citation-sep">·</span><span>${page.replace(" · ","")}</span>` : ""}
           <span class="citation-sep">·</span>
           <span class="badge badge-domain">${escapeHtml(c.domain)}</span>
           <span class="badge badge-${c.access_level}">${escapeHtml(c.access_level)}</span>
@@ -407,6 +372,12 @@ function highlightCitation(refId) {
 function setAskLoading(on) { askBtn.disabled = on; askLabel.textContent = on ? "Thinking…" : "Ask"; askSpinner.classList.toggle("hidden", !on); }
 function showAskError(msg) { askError.textContent = "Error: " + msg; askError.classList.remove("hidden"); }
 
+function renderRefTags(escapedText) {
+  return escapedText.replace(/\[REF-(\d+)\]/g, (_, n) =>
+    `<a class="ref-badge" href="#citation-REF-${n}" onclick="highlightCitation('REF-${n}');return false;">[REF-${n}]</a>`
+  );
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
    TAB 3 — AUDIT LOG
@@ -423,13 +394,13 @@ async function loadAuditLog() {
       return;
     }
     list.innerHTML = "";
-    data.entries.forEach(e => list.appendChild(buildAuditEntry(e)));
+    data.entries.forEach((e, i) => list.appendChild(buildAuditEntry(e, i + 1)));
   } catch { list.innerHTML = `<div class="error-box">Failed to load audit log.</div>`; }
 }
 
-function buildAuditEntry(e) {
+function buildAuditEntry(e, idx = 1) {
   const div = document.createElement("div");
-  div.className = "audit-entry";
+  div.className = `audit-entry stagger-${Math.min(idx, 10)}`;
   const ts   = e.timestamp ? new Date(e.timestamp).toLocaleString() : "—";
   const conf = (e.confidence?.level || "LOW").toUpperCase();
   const nCit = (e.citations || []).length;
@@ -445,8 +416,6 @@ function buildAuditEntry(e) {
     </div>
     <div class="audit-footer">
       ${pill(`${nCit} citation${nCit !== 1 ? "s" : ""}`)}
-      ${pill(`${(e.retrieval_trace || []).length} chunks`)}
-      ${pill(e.model || "—")}
       ${e.token_usage ? pill(`${(e.token_usage.total_tokens || 0).toLocaleString()} tokens`) : ""}
     </div>`;
   return div;
@@ -564,13 +533,13 @@ async function loadActivity() {
     const data = await (await fetch("/api/admin/activity")).json();
     if (!data.length) { list.innerHTML = `<div class="placeholder"><p>No activity yet.</p></div>`; return; }
     list.innerHTML = "";
-    data.forEach(u => list.appendChild(buildActivityCard(u)));
+    data.forEach((u, i) => list.appendChild(buildActivityCard(u, i + 1)));
   } catch { list.innerHTML = `<div class="error-box">Failed to load activity.</div>`; }
 }
 
-function buildActivityCard(u) {
+function buildActivityCard(u, idx = 1) {
   const div = document.createElement("div");
-  div.className = "activity-card";
+  div.className = `activity-card stagger-${Math.min(idx, 10)}`;
   const lastTs = u.last_activity ? new Date(u.last_activity).toLocaleString() : "Never";
   div.innerHTML = `
     <div class="activity-avatar role-${u.role} mini-avatar">${escapeHtml(u.initials)}</div>
@@ -593,7 +562,7 @@ function buildActivityCard(u) {
 function buildChunkCard(chunk, num) {
   const m = chunk.metadata;
   const div = document.createElement("div");
-  div.className = "chunk-card";
+  div.className = `chunk-card stagger-${Math.min(num, 10)}`;
   div.innerHTML = `
     <div class="chunk-card-header">
       <span class="chunk-num">Chunk #${num}</span>
@@ -617,12 +586,12 @@ function buildChunkCard(chunk, num) {
   return div;
 }
 
-function buildResultCard(result, maxScore, minScore) {
+function buildResultCard(result, maxScore, minScore, idx = 1) {
   const m      = result.chunk.metadata;
   const range  = maxScore - minScore || 1;
   const barPct = 10 + 90 * ((result.rerank_score - minScore) / range);
   const div    = document.createElement("div");
-  div.className = "result-card";
+  div.className = `result-card stagger-${Math.min(idx, 10)}`;
   div.innerHTML = `
     <div class="result-card-header">
       <div class="rank-badge ${result.rank <= 3 ? `rank-${result.rank}` : "rank-n"}">#${result.rank}</div>
@@ -671,14 +640,536 @@ function wireExpand(card) {
 /* ── Shared helpers ──────────────────────────────────────────── */
 function pill(text) { return `<span class="stat-pill">${escapeHtml(text)}</span>`; }
 
-function renderRefTags(escapedText) {
-  return escapedText.replace(/\[REF-(\d+)\]/g, (_, n) =>
-    `<a class="ref-badge" href="#citation-REF-${n}" onclick="highlightCitation('REF-${n}');return false;">[REF-${n}]</a>`
-  );
-}
-
 function escapeHtml(str) {
   return String(str ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   TAB 5 — TICKETS
+════════════════════════════════════════════════════════════════ */
+document.getElementById("refresh-tickets-btn")?.addEventListener("click", loadTickets);
+document.getElementById("ticket-domain-filter")?.addEventListener("change", loadTickets);
+document.getElementById("ticket-status-filter")?.addEventListener("change", loadTickets);
+
+async function loadTickets() {
+  const list = document.getElementById("tickets-list");
+  list.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Loading…</p></div>`;
+
+  const domain = document.getElementById("ticket-domain-filter")?.value || "";
+  const status = document.getElementById("ticket-status-filter")?.value || "";
+  const url    = "/api/tickets" + (domain ? `?domain=${encodeURIComponent(domain)}` : "");
+
+  try {
+    const res  = await fetch(url);
+    if (res.status === 403) { list.innerHTML = `<div class="error-box">Access restricted.</div>`; return; }
+    let tickets = await res.json();
+    if (status) tickets = tickets.filter(t => t.status === status);
+    if (!tickets.length) {
+      list.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#127915;</div><p>No tickets found.</p></div>`;
+      return;
+    }
+    list.innerHTML = "";
+    tickets.forEach((t, i) => list.appendChild(buildTicketCard(t, i + 1)));
+  } catch {
+    list.innerHTML = `<div class="error-box">Failed to load tickets.</div>`;
+  }
+}
+
+function buildTicketCard(t, idx = 1) {
+  const div    = document.createElement("div");
+  div.className = `ticket-card ${t.status === "resolved" ? "ticket-resolved" : ""} stagger-${Math.min(idx, 10)}`;
+  div.id        = `ticket-${t.ticket_id}`;
+
+  const tid     = t.ticket_id;
+  const ts      = t.created_at ? new Date(t.created_at).toLocaleString() : "—";
+  const isOpen  = t.status === "open";
+  const noDataBadge = t.no_data ? `<span class="ticket-nodata-badge">No answer</span>` : "";
+  const ACCESS_OPTIONS = ["public","internal","confidential","restricted"]
+    .map(v => `<option value="${v}"${v==="internal"?" selected":""}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`)
+    .join("");
+
+  div.innerHTML = `
+    <div class="ticket-card-header">
+      <span class="ticket-id">&#127915; ${escapeHtml(tid)}</span>
+      <span class="conf-badge conf-LOW" style="font-size:10px">LOW</span>
+      ${noDataBadge}
+      <span class="badge badge-domain">${escapeHtml(t.domain)}</span>
+      <span class="ticket-status-badge ticket-status-${t.status}">${t.status}</span>
+      <span class="ticket-ts">&#128197; ${ts}</span>
+    </div>
+    <div class="ticket-card-body">
+      <div class="ticket-query">&#9906; ${escapeHtml(t.query)}</div>
+      <div class="ticket-answer">${escapeHtml((t.answer || "").substring(0, 200))}${(t.answer||"").length > 200 ? "…" : ""}</div>
+      ${t.confidence_reason ? `<div class="ticket-reason">&#128270; ${escapeHtml(t.confidence_reason)}</div>` : ""}
+    </div>
+    <div class="ticket-card-footer">
+      ${pill("&#128100; " + escapeHtml(t.user_name))}
+      ${t.audit_id ? pill("Audit: " + escapeHtml(t.audit_id)) : ""}
+      <div class="ticket-footer-actions">
+        ${isOpen ? `<button class="ticket-answer-btn" data-id="${tid}">&#9998; Answer Ticket</button>` : ""}
+        <button class="${isOpen ? "ticket-resolve-btn" : "ticket-reopen-btn"}"
+                data-id="${tid}" data-status="${isOpen ? "resolved" : "open"}">
+          ${isOpen ? "Mark Resolved" : "Reopen"}
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Inline edit panel (open tickets only) ── -->
+    ${isOpen ? `
+    <div class="ticket-edit-panel hidden" id="tedit-panel-${tid}">
+      <div class="tedit-tabs">
+        <button class="tedit-tab tedit-tab-active" data-mode="text">&#9998; Write Answer</button>
+        <button class="tedit-tab" data-mode="upload">&#8659; Upload Document</button>
+      </div>
+
+      <!-- Write answer mode -->
+      <div class="tedit-mode" id="tedit-text-${tid}">
+        <div class="field-group">
+          <label>Answer title</label>
+          <input type="text" id="tedit-title-${tid}" value="${escapeHtml(t.query)}" />
+        </div>
+        <div class="field-group">
+          <label>Answer content</label>
+          <textarea id="tedit-body-${tid}" rows="5"
+                    placeholder="Write the correct answer to add to the knowledge base…"></textarea>
+        </div>
+        <div class="field-group">
+          <label>Access level</label>
+          <select id="tedit-access-text-${tid}">${ACCESS_OPTIONS}</select>
+        </div>
+        <div class="tedit-actions">
+          <button class="btn-primary tedit-submit-text" data-id="${tid}" data-domain="${escapeHtml(t.domain)}">Add to Knowledge Base</button>
+          <button class="btn-secondary tedit-cancel" data-id="${tid}">Cancel</button>
+        </div>
+        <div class="tedit-feedback hidden" id="tedit-fb-text-${tid}"></div>
+      </div>
+
+      <!-- Upload document mode -->
+      <div class="tedit-mode hidden" id="tedit-upload-${tid}">
+        <div class="field-group">
+          <label>Source type</label>
+          <select id="tedit-src-${tid}">
+            <option value="pdf">PDF Document</option>
+            <option value="confluence_html">Confluence (HTML export)</option>
+            <option value="teams">Teams Transcript (.vtt / .json)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>File</label>
+          <input type="file" id="tedit-file-${tid}" accept=".pdf,.html,.htm,.vtt,.json" />
+        </div>
+        <div class="field-group">
+          <label>Access level</label>
+          <select id="tedit-access-upload-${tid}">${ACCESS_OPTIONS}</select>
+        </div>
+        <div class="tedit-actions">
+          <button class="btn-primary tedit-submit-upload" data-id="${tid}" data-domain="${escapeHtml(t.domain)}">Upload &amp; Add to Knowledge Base</button>
+          <button class="btn-secondary tedit-cancel" data-id="${tid}">Cancel</button>
+        </div>
+        <div class="tedit-feedback hidden" id="tedit-fb-upload-${tid}"></div>
+      </div>
+    </div>` : ""}`;
+
+  // ── Answer Ticket toggle ──────────────────────────────────────
+  div.querySelector(".ticket-answer-btn")?.addEventListener("click", function () {
+    document.getElementById(`tedit-panel-${this.dataset.id}`).classList.toggle("hidden");
+  });
+
+  // ── Tab switching ─────────────────────────────────────────────
+  div.querySelectorAll(".tedit-tab").forEach(tab => {
+    tab.addEventListener("click", function () {
+      const panel = document.getElementById(`tedit-panel-${tid}`);
+      panel.querySelectorAll(".tedit-tab").forEach(t => t.classList.remove("tedit-tab-active"));
+      this.classList.add("tedit-tab-active");
+      panel.querySelectorAll(".tedit-mode").forEach(m => m.classList.add("hidden"));
+      document.getElementById(`tedit-${this.dataset.mode}-${tid}`).classList.remove("hidden");
+    });
+  });
+
+  // ── Cancel ────────────────────────────────────────────────────
+  div.querySelectorAll(".tedit-cancel").forEach(btn => {
+    btn.addEventListener("click", function () {
+      document.getElementById(`tedit-panel-${this.dataset.id}`).classList.add("hidden");
+    });
+  });
+
+  // ── Submit: write answer ──────────────────────────────────────
+  div.querySelector(".tedit-submit-text")?.addEventListener("click", async function () {
+    const id     = this.dataset.id;
+    const domain = this.dataset.domain;
+    const title  = document.getElementById(`tedit-title-${id}`).value.trim();
+    const body   = document.getElementById(`tedit-body-${id}`).value.trim();
+    const access = document.getElementById(`tedit-access-text-${id}`).value;
+    const fb     = document.getElementById(`tedit-fb-text-${id}`);
+    if (!body) { showTeditFeedback(fb, "Please enter an answer.", "error"); return; }
+
+    this.disabled    = true;
+    this.textContent = "Adding…";
+    try {
+      const res  = await fetch("/api/ingest/text", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: body, title, domain, access_level: access, ticket_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showTeditFeedback(fb, data.error || "Failed.", "error"); return; }
+      showTeditFeedback(fb, `&#10003; Added ${data.newly_indexed} chunk(s) to the knowledge base.`, "success");
+      refreshIndexStatus();
+      setTimeout(loadTickets, 1200);
+    } catch { showTeditFeedback(fb, "Network error.", "error"); }
+    finally  { this.disabled = false; this.textContent = "Add to Knowledge Base"; }
+  });
+
+  // ── Submit: upload document ───────────────────────────────────
+  div.querySelector(".tedit-submit-upload")?.addEventListener("click", async function () {
+    const id       = this.dataset.id;
+    const domain   = this.dataset.domain;
+    const fileEl   = document.getElementById(`tedit-file-${id}`);
+    const srcType  = document.getElementById(`tedit-src-${id}`).value;
+    const access   = document.getElementById(`tedit-access-upload-${id}`).value;
+    const fb       = document.getElementById(`tedit-fb-upload-${id}`);
+    if (!fileEl.files.length) { showTeditFeedback(fb, "Please select a file.", "error"); return; }
+
+    this.disabled    = true;
+    this.textContent = "Uploading…";
+    const fd = new FormData();
+    fd.append("file", fileEl.files[0]);
+    fd.append("source_type",  srcType);
+    fd.append("access_level", access);
+    fd.append("domain",       domain);
+    try {
+      const res  = await fetch("/api/ingest", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) { showTeditFeedback(fb, data.error || "Failed.", "error"); return; }
+      // Mark ticket resolved
+      await fetch(`/api/tickets/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "resolved" }),
+      });
+      showTeditFeedback(fb, `&#10003; Uploaded and added ${data.newly_indexed} chunk(s).`, "success");
+      refreshIndexStatus();
+      setTimeout(loadTickets, 1200);
+    } catch { showTeditFeedback(fb, "Network error.", "error"); }
+    finally  { this.disabled = false; this.textContent = "Upload & Add to Knowledge Base"; }
+  });
+
+  // ── Mark resolved / Reopen ────────────────────────────────────
+  div.querySelector(".ticket-resolve-btn, .ticket-reopen-btn")?.addEventListener("click", async function () {
+    const res = await fetch(`/api/tickets/${this.dataset.id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: this.dataset.status }),
+    });
+    if (res.ok) loadTickets();
+    else { const d = await res.json(); alert(d.error || "Update failed."); }
+  });
+
+  return div;
+}
+
+function showTeditFeedback(el, msg, type) {
+  el.innerHTML   = msg;
+  el.className   = `tedit-feedback tedit-feedback-${type}`;
+  el.classList.remove("hidden");
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   TAB 6 — INSIGHTS
+════════════════════════════════════════════════════════════════ */
+let confChartInstance   = null;
+let domainChartInstance = null;
+
+document.getElementById("refresh-insights-btn")?.addEventListener("click", loadInsights);
+document.getElementById("generate-report-btn")?.addEventListener("click", generateGapReport);
+
+async function loadInsights() {
+  const statsEl = document.getElementById("chart-stats");
+  statsEl.innerHTML = `<div class="placeholder" style="padding:20px"><p>Loading…</p></div>`;
+
+  try {
+    const data = await (await fetch("/api/insights")).json();
+    renderConfidenceChart(data.distribution, data.total);
+    renderChartStats(data.distribution, data.total);
+    if (currentUser?.role === "admin" && Object.keys(data.by_domain || {}).length) {
+      renderDomainChart(data.by_domain);
+      document.getElementById("domain-breakdown-section").style.display = "";
+    }
+  } catch {
+    statsEl.innerHTML = `<div class="error-box">Failed to load insights.</div>`;
+  }
+}
+
+function renderConfidenceChart(dist, total) {
+  const ctx = document.getElementById("conf-chart").getContext("2d");
+  if (confChartInstance) confChartInstance.destroy();
+  confChartInstance = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["HIGH", "MEDIUM", "LOW"],
+      datasets: [{
+        data:            [dist.HIGH || 0, dist.MEDIUM || 0, dist.LOW || 0],
+        backgroundColor: ["#16a34a", "#ca8a04", "#dc2626"],
+        borderWidth:     3,
+        borderColor:     "#fff",
+        hoverOffset:     6,
+      }],
+    },
+    options: {
+      cutout: "62%",
+      plugins: {
+        legend: { position: "bottom", labels: { font: { size: 12 }, padding: 16 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const pct = total ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+              return ` ${ctx.label}: ${ctx.parsed} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderChartStats(dist, total) {
+  const statsEl = document.getElementById("chart-stats");
+  const pct = v => total ? ((v / total) * 100).toFixed(1) : "0.0";
+  statsEl.innerHTML = `
+    <div class="chart-stat-item">
+      <span class="chart-stat-label">Total queries</span>
+      <strong class="chart-stat-value">${total}</strong>
+    </div>
+    <div class="chart-stat-item">
+      <span class="chart-stat-dot" style="background:#16a34a"></span>
+      <span class="chart-stat-label">HIGH confidence</span>
+      <strong class="chart-stat-value">${dist.HIGH || 0}</strong>
+      <span class="chart-stat-pct">${pct(dist.HIGH || 0)}%</span>
+    </div>
+    <div class="chart-stat-item">
+      <span class="chart-stat-dot" style="background:#ca8a04"></span>
+      <span class="chart-stat-label">MEDIUM confidence</span>
+      <strong class="chart-stat-value">${dist.MEDIUM || 0}</strong>
+      <span class="chart-stat-pct">${pct(dist.MEDIUM || 0)}%</span>
+    </div>
+    <div class="chart-stat-item chart-stat-alert">
+      <span class="chart-stat-dot" style="background:#dc2626"></span>
+      <span class="chart-stat-label">LOW confidence</span>
+      <strong class="chart-stat-value">${dist.LOW || 0}</strong>
+      <span class="chart-stat-pct">${pct(dist.LOW || 0)}%</span>
+    </div>`;
+}
+
+function renderDomainChart(byDomain) {
+  const ctx    = document.getElementById("domain-chart").getContext("2d");
+  const labels = Object.keys(byDomain);
+  if (domainChartInstance) domainChartInstance.destroy();
+  domainChartInstance = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "HIGH",   data: labels.map(d => byDomain[d].HIGH   || 0), backgroundColor: "#16a34a" },
+        { label: "MEDIUM", data: labels.map(d => byDomain[d].MEDIUM || 0), backgroundColor: "#ca8a04" },
+        { label: "LOW",    data: labels.map(d => byDomain[d].LOW    || 0), backgroundColor: "#dc2626" },
+      ],
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { stacked: true, ticks: { font: { size: 11 } } },
+        y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 } } },
+      },
+      plugins: { legend: { position: "bottom", labels: { font: { size: 12 }, padding: 14 } } },
+    },
+  });
+}
+
+async function generateGapReport() {
+  const content    = document.getElementById("gap-report-content");
+  const btnLabel   = document.getElementById("report-btn-label");
+  const btnSpinner = document.getElementById("report-btn-spinner");
+  const btn        = document.getElementById("generate-report-btn");
+
+  btn.disabled       = true;
+  btnLabel.innerHTML = "Generating…";
+  btnSpinner.classList.remove("hidden");
+  content.innerHTML  = `<div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Analysing knowledge gaps…</p></div>`;
+
+  try {
+    const res  = await fetch("/api/insights/report", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      content.innerHTML = `<div class="error-box">${escapeHtml(data.error || "Failed.")}</div>`;
+      return;
+    }
+    content.innerHTML = `
+      <div class="gap-report-meta">Based on ${data.based_on} LOW / MEDIUM confidence quer${data.based_on === 1 ? "y" : "ies"}</div>
+      <div class="gap-report-body">${renderMarkdown(data.report || "")}</div>`;
+  } catch {
+    content.innerHTML = `<div class="error-box">Failed to generate report.</div>`;
+  } finally {
+    btn.disabled       = false;
+    btnLabel.innerHTML = "&#9889; Regenerate";
+    btnSpinner.classList.add("hidden");
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TAB 7 — KNOWLEDGE BASE EXPLORER
+════════════════════════════════════════════════════════════════ */
+document.getElementById("refresh-kb-btn")?.addEventListener("click", loadKBExplorer);
+
+const KB_DOMAIN_ICONS = {
+  "Legal": "&#9878;", "Finance": "&#128176;", "HR": "&#128101;",
+  "Technology": "&#128187;", "Operations": "&#9881;", "Marketing": "&#128226;",
+  "Customer Service": "&#127911;", "Data Procurement": "&#128202;",
+  "Other": "&#128193;", "Unknown": "&#128218;",
+};
+const KB_SRC_ICONS = { "pdf": "&#128196;", "teams": "&#128172;", "confluence": "&#128279;" };
+
+async function loadKBExplorer() {
+  const grid    = document.getElementById("kb-sector-grid");
+  const statsBar = document.getElementById("kb-stats-bar");
+  grid.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#8987;</div><p>Loading knowledge base…</p></div>`;
+  statsBar.innerHTML = "";
+
+  try {
+    const res  = await fetch("/api/kb/documents");
+    const docs = await res.json();
+    if (res.status === 403) {
+      grid.innerHTML = `<div class="error-box">Access restricted.</div>`;
+      return;
+    }
+    if (!docs.length) {
+      grid.innerHTML = `<div class="placeholder"><div class="placeholder-icon">&#128218;</div><p>No documents in the knowledge base yet. Ingest some documents first.</p></div>`;
+      return;
+    }
+
+    // Group by domain
+    const sectors = {};
+    let totalChunks = 0;
+    for (const doc of docs) {
+      const d = doc.domain || "Unknown";
+      if (!sectors[d]) sectors[d] = [];
+      sectors[d].push(doc);
+      totalChunks += doc.chunk_count;
+    }
+    const domainCount = Object.keys(sectors).length;
+
+    // Render stats bar
+    statsBar.innerHTML = `
+      <div class="kb-stat-card animate-in stagger-1">
+        <div class="kb-stat-value">${docs.length}</div>
+        <div class="kb-stat-label">Documents</div>
+      </div>
+      <div class="kb-stat-card animate-in stagger-2">
+        <div class="kb-stat-value">${domainCount}</div>
+        <div class="kb-stat-label">Domains</div>
+      </div>
+      <div class="kb-stat-card animate-in stagger-3">
+        <div class="kb-stat-value">${totalChunks.toLocaleString()}</div>
+        <div class="kb-stat-label">Indexed Segments</div>
+      </div>`;
+
+    // Render sector cards
+    grid.innerHTML = "";
+    Object.entries(sectors).sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([domain, domDocs], idx) => {
+        const card = document.createElement("div");
+        card.className = `kb-sector-card stagger-${Math.min(idx + 1, 10)}`;
+        const icon = KB_DOMAIN_ICONS[domain] || "&#128193;";
+        card.innerHTML = `
+          <div class="kb-sector-header">
+            <div class="kb-sector-icon">${icon}</div>
+            <span class="kb-sector-name">${escapeHtml(domain)}</span>
+            <span class="kb-sector-count">${domDocs.length} doc${domDocs.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div class="kb-doc-list">
+            ${domDocs.map(doc => {
+              const srcIcon = KB_SRC_ICONS[doc.source_system] || "&#128196;";
+              const author  = doc.author !== "—" ? `&#128100; ${escapeHtml(doc.author)}` : "";
+              const date    = doc.date   !== "—" ? `&#128197; ${escapeHtml(doc.date)}`   : "";
+              return `
+                <div class="kb-doc-item">
+                  <div class="kb-doc-icon">${srcIcon}</div>
+                  <div class="kb-doc-info">
+                    <div class="kb-doc-title" title="${escapeHtml(doc.source_file)}">${escapeHtml(doc.title || doc.source_file)}</div>
+                    <div class="kb-doc-meta">
+                      <span class="badge badge-${doc.access_level}">${escapeHtml(doc.access_level)}</span>
+                      ${author ? `<span>${author}</span>` : ""}
+                      ${date   ? `<span>${date}</span>`   : ""}
+                    </div>
+                  </div>
+                </div>`;
+            }).join("")}
+          </div>`;
+        grid.appendChild(card);
+      });
+  } catch {
+    grid.innerHTML = `<div class="error-box">Failed to load knowledge base.</div>`;
+  }
+}
+
+
+function renderMarkdown(text) {
+  /* Lightweight markdown → HTML converter for the gap report.
+     Handles: # headings, **bold**, *italic*, bullet lists (•/-/*), numbered
+     lists, and paragraphs.  escapeHtml is applied before inline substitutions
+     so user-supplied content can never inject raw HTML. */
+  function inline(str) {
+    return escapeHtml(str)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g,     "<em>$1</em>");
+  }
+
+  const lines = text.split("\n");
+  let html = "", inList = false, listTag = "ul";
+
+  const closeList = () => { if (inList) { html += `</${listTag}>`; inList = false; } };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+
+    if (!line) { closeList(); continue; }
+
+    // ATX headings: #, ##, ###
+    const hMatch = line.match(/^(#{1,3})\s+(.*)/);
+    if (hMatch) {
+      closeList();
+      const level = Math.min(hMatch[1].length + 2, 5); // h3–h5
+      html += `<h${level} class="gap-report-heading">${inline(hMatch[2])}</h${level}>`;
+      continue;
+    }
+
+    // Setext-style bold section titles (e.g. "UNCOVERED TOPICS:")
+    if (line === line.toUpperCase() && line.length < 60 && /[A-Z]{3}/.test(line)) {
+      closeList();
+      html += `<p class="gap-report-section-title">${inline(line)}</p>`;
+      continue;
+    }
+
+    // Bullet list: •, -, *
+    const bulletMatch = line.match(/^[•\-\*]\s+(.*)/);
+    if (bulletMatch) {
+      if (!inList) { html += `<ul class="gap-report-list">`; inList = true; listTag = "ul"; }
+      html += `<li class="gap-report-item">${inline(bulletMatch[1])}</li>`;
+      continue;
+    }
+
+    // Numbered list: 1. 2. etc.
+    const numMatch = line.match(/^\d+\.\s+(.*)/);
+    if (numMatch) {
+      if (!inList) { html += `<ol class="gap-report-list">`; inList = true; listTag = "ol"; }
+      html += `<li class="gap-report-item">${inline(numMatch[1])}</li>`;
+      continue;
+    }
+
+    closeList();
+    html += `<p class="gap-report-para">${inline(line)}</p>`;
+  }
+
+  closeList();
+  return html;
 }

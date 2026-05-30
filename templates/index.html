@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AskMe — RAG Pipeline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700;800&family=Noto+Serif:wght@700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -13,15 +16,19 @@
       <div class="logo">
         <span class="logo-icon">&#9670;</span>
         <span class="logo-text">AskMe</span>
+        <span class="logo-by">by</span>
+        <img src="/static/icons/six-logo.svg" class="six-logo-img" alt="SIX" />
       </div>
       <nav class="tab-nav">
         <button class="tab-btn"        data-tab="ingest" id="tab-btn-ingest">&#8659; Ingest</button>
         <button class="tab-btn active" data-tab="search" id="tab-btn-search">&#9906; Ask</button>
         <button class="tab-btn"        data-tab="audit"  id="tab-btn-audit" >&#128196; Audit Log</button>
-        <button class="tab-btn hidden" data-tab="admin"  id="tab-btn-admin" >&#128101; Users</button>
+        <button class="tab-btn hidden" data-tab="admin"   id="tab-btn-admin"  >&#128101; Users</button>
+        <button class="tab-btn hidden" data-tab="tickets" id="tab-btn-tickets">&#127915; Tickets</button>
+        <button class="tab-btn hidden" data-tab="insights" id="tab-btn-insights">&#128202; Insights</button>
+        <button class="tab-btn hidden" data-tab="kb"       id="tab-btn-kb"      >&#128218; Knowledge Base</button>
       </nav>
-      <span class="provider-badge" id="provider-badge">…</span>
-      <span class="index-status"   id="index-status">Loading…</span>
+
 
       <!-- User info + logout -->
       <div class="user-pill" id="user-pill">
@@ -87,11 +94,21 @@
           <div class="field-group" id="domain-field-group">
             <label for="domain">Domain</label>
             <div class="domain-row">
-              <input type="text" id="domain" name="domain"
-                     placeholder="e.g. Legal, Finance, HR…" autocomplete="off" />
+              <select id="domain" name="domain">
+                <option value="">— Select domain —</option>
+                <option value="Legal">Legal</option>
+                <option value="Customer Service">Customer Service</option>
+                <option value="HR">HR</option>
+                <option value="Finance">Finance</option>
+                <option value="Technology">Technology</option>
+                <option value="Operations">Operations</option>
+                <option value="Marketing">Marketing</option>
+                <option value="Data Procurement">Data Procurement</option>
+                <option value="Other">Other</option>
+              </select>
               <button type="button" id="auto-btn" class="auto-btn">Auto</button>
             </div>
-            <span class="field-hint">Leave blank or click Auto to let Gemini detect it.</span>
+            <span class="field-hint">Select a domain or click Auto to let Gemini detect it.</span>
           </div>
 
           <div id="teams-fields" class="teams-fields hidden">
@@ -166,9 +183,20 @@
           </div>
           <div class="filter-item">
             <label for="s-domain">Domain filter</label>
-            <input type="text" id="s-domain" placeholder="e.g. Legal" />
+            <select id="s-domain">
+              <option value="">All domains</option>
+              <option value="Legal">Legal</option>
+              <option value="Customer Service">Customer Service</option>
+              <option value="HR">HR</option>
+              <option value="Finance">Finance</option>
+              <option value="Technology">Technology</option>
+              <option value="Operations">Operations</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Data Procurement">Data Procurement</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
-          <div class="filter-item">
+          <div class="filter-item hidden" id="topk-filter">
             <label for="s-topk">Top-K chunks</label>
             <input type="number" id="s-topk" value="5" min="1" max="20" style="width:72px" />
           </div>
@@ -202,7 +230,7 @@
           <h3 class="answer-title">&#9670; Answer</h3>
           <span id="conf-badge" class="conf-badge">—</span>
           <span id="conf-reason" class="conf-reason"></span>
-          <span id="model-chip" class="model-chip"></span>
+          <span id="model-chip" class="model-chip hidden"></span>
           <span class="audit-chip" id="audit-chip"></span>
         </div>
         <div id="answer-text" class="answer-text"></div>
@@ -225,40 +253,6 @@
       </div>
 
     </div><!-- /.ask-main -->
-
-    <!-- Token sidebar -->
-    <aside class="token-sidebar">
-      <h3 class="token-sidebar-title">&#9650; Token Usage</h3>
-      <div class="token-section">
-        <div class="token-section-label">LAST QUERY</div>
-        <div class="token-row">
-          <span class="token-row-label">Prompt</span>
-          <div class="token-bar-wrap"><div class="token-bar token-bar-prompt" id="bar-prompt" style="width:0%"></div></div>
-          <span class="token-count" id="cnt-prompt">—</span>
-        </div>
-        <div class="token-row">
-          <span class="token-row-label">Response</span>
-          <div class="token-bar-wrap"><div class="token-bar token-bar-completion" id="bar-completion" style="width:0%"></div></div>
-          <span class="token-count" id="cnt-completion">—</span>
-        </div>
-        <div class="token-total-row">Total <span id="cnt-total">—</span>
-          <span id="cnt-estimated" class="token-estimated hidden">~est.</span>
-        </div>
-      </div>
-      <div class="token-divider"></div>
-      <div class="token-section">
-        <div class="token-section-label">SESSION</div>
-        <div class="token-stat-row"><span>Queries</span><strong id="sess-queries">0</strong></div>
-        <div class="token-stat-row"><span>Total tokens</span><strong id="sess-total">0</strong></div>
-        <div class="token-stat-row"><span>Avg / query</span><strong id="sess-avg">—</strong></div>
-      </div>
-      <div class="token-divider"></div>
-      <div class="token-section">
-        <div class="token-section-label">MODEL</div>
-        <div class="token-model-name" id="token-model-name">—</div>
-      </div>
-    </aside>
-
     </div><!-- /.ask-layout -->
   </div>
 
@@ -325,6 +319,123 @@
         </div>
         <div id="activity-list" class="activity-list">
           <div class="placeholder"><div class="placeholder-icon">&#128202;</div><p>Loading activity…</p></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 5 — TICKETS (expert + admin)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-tickets" class="tab-page hidden">
+    <div class="tickets-page">
+
+      <div class="tickets-header-row">
+        <div>
+          <h2 class="panel-title" style="margin-bottom:4px">Knowledge Gap Tickets</h2>
+          <p class="tickets-desc">Queries that received a LOW-confidence answer are logged here for expert review.</p>
+        </div>
+        <div class="tickets-controls">
+          <select id="ticket-domain-filter" class="hidden">
+            <option value="">All domains</option>
+            <option value="Legal">Legal</option>
+            <option value="Customer Service">Customer Service</option>
+            <option value="HR">HR</option>
+            <option value="Finance">Finance</option>
+            <option value="Technology">Technology</option>
+            <option value="Operations">Operations</option>
+            <option value="Marketing">Marketing</option>
+            <option value="Data Procurement">Data Procurement</option>
+            <option value="Other">Other</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+          <select id="ticket-status-filter">
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <button class="btn-secondary" id="refresh-tickets-btn">&#8635; Refresh</button>
+        </div>
+      </div>
+
+      <div id="tickets-list">
+        <div class="placeholder"><div class="placeholder-icon">&#127915;</div><p>No tickets yet.</p></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 6 — INSIGHTS (expert + admin)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-insights" class="tab-page hidden">
+    <div class="insights-page">
+
+      <!-- Confidence chart section -->
+      <div class="insights-section">
+        <div class="insights-section-header">
+          <h2 class="panel-title" style="margin:0">Confidence Distribution</h2>
+          <button class="btn-secondary" id="refresh-insights-btn">&#8635; Refresh</button>
+        </div>
+        <p class="insights-desc">Breakdown of all recorded queries by the confidence level of their answers.</p>
+        <div class="insights-chart-row">
+          <div class="chart-container">
+            <canvas id="conf-chart"></canvas>
+          </div>
+          <div class="chart-stats" id="chart-stats">
+            <div class="placeholder" style="padding:20px"><p>Loading stats…</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-domain breakdown (admin only) -->
+      <div class="insights-section" id="domain-breakdown-section" style="display:none">
+        <h2 class="panel-title" style="margin-bottom:8px">Confidence by Domain</h2>
+        <p class="insights-desc">How well each business domain is covered in the knowledge base.</p>
+        <div class="domain-chart-container">
+          <canvas id="domain-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Gap report section -->
+      <div class="insights-section">
+        <div class="insights-section-header">
+          <h2 class="panel-title" style="margin:0">Knowledge Gap Report</h2>
+          <button class="btn-primary" id="generate-report-btn" style="font-size:13px;padding:8px 16px">
+            <span id="report-btn-label">&#9889; Generate Report</span>
+            <span id="report-btn-spinner" class="spinner hidden"></span>
+          </button>
+        </div>
+        <p class="insights-desc">An LLM-generated analysis of what topics are missing from the knowledge base, based on LOW and MEDIUM confidence queries.</p>
+        <div id="gap-report-content" class="gap-report-content">
+          <div class="placeholder"><div class="placeholder-icon">&#128200;</div><p>Click "Generate Report" to analyse knowledge gaps.</p></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       TAB 7 — KNOWLEDGE BASE EXPLORER (expert + admin)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="tab-kb" class="tab-page hidden">
+    <div class="kb-page">
+
+      <div class="kb-header-row">
+        <div>
+          <h2 class="panel-title" style="margin-bottom:4px">Knowledge Base Explorer</h2>
+          <p class="kb-desc">All indexed documents organised by domain sector, with source and access metadata.</p>
+        </div>
+        <button class="btn-secondary" id="refresh-kb-btn">&#8635; Refresh</button>
+      </div>
+
+      <div id="kb-stats-bar" class="kb-stats-bar"></div>
+
+      <div id="kb-sector-grid" class="kb-sector-grid">
+        <div class="placeholder">
+          <div class="placeholder-icon">&#128218;</div>
+          <p>Switch to this tab to explore the knowledge base.</p>
         </div>
       </div>
 

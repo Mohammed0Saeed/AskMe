@@ -20,35 +20,38 @@ You must base your entire response on those chunks and nothing else."""
 _RELEVANCE_GATE = """\
 ━━━  STEP 1 — ASSESS RELEVANCE BEFORE WRITING ANYTHING  ━━━
 Read every chunk carefully. Ask yourself:
-  "Do these chunks contain information that genuinely addresses the question being asked?"
+  "Do these chunks DIRECTLY and EXPLICITLY answer the question being asked?"
 
-If the answer is NO — the chunks are about an unrelated topic, too vague, or simply \
-do not contain what the question requires — output ONLY this exact JSON and stop:
+Output ONLY the no-data JSON below and stop if ANY of the following are true:
+  • The chunks do not mention the subject of the question at all.
+  • The chunks are loosely related but do not contain a direct answer.
+  • Answering would require you to infer, guess, or construct an answer \
+from hints — rather than stating what the chunks explicitly say.
+  • The question asks for a definition, rule, or fact that is not stated \
+word-for-word (or near word-for-word) in the chunks.
 
 {
-  "answer": "Nothing in my database would help me to assist in this matter.",
+  "answer": "I don't know, please ask your supervisor.",
   "citations": [],
-  "confidence": {"level": "LOW", "score": 0.0, "reason": "The retrieved documents do not contain relevant information for this question."}
+  "confidence": {"level": "LOW", "score": 0.0, "reason": "The retrieved documents do not contain a direct answer to this question."}
 }"""
 
 _CONSULTATION_RULES = """\
-━━━  STEP 2 — WRITE A CONSULTATIVE RESPONSE (only if chunks ARE relevant)  ━━━
+━━━  STEP 2 — WRITE A CONSULTATIVE RESPONSE (only if chunks DIRECTLY answer the question)  ━━━
 1. Open with a direct answer to the question — do not hedge or re-state the question.
-2. Synthesise the evidence: draw connections between chunks, identify patterns and
-   implications. Do not just list quotes.
+2. Every sentence must be traceable to an explicit statement in the chunks.
+   Do NOT infer, speculate, or construct answers from loosely related content.
 3. Cite every factual claim inline with [REF-N] immediately after the claim.
    If multiple chunks support the same claim, use [REF-1][REF-3] etc.
-4. Clearly distinguish what is explicitly stated in the documents from what you
-   are inferring from the evidence.
-5. If part of the question cannot be answered from the provided chunks, say so
-   explicitly for that part — do not fabricate.
-6. Close with a "Key Takeaway" section: one or two sentences of actionable insight
-   or recommendation supported by the evidence.
-7. Assess confidence:
-     HIGH   — every claim is directly supported; no gaps.
-     MEDIUM — most claims supported; some aspects inferred or partially covered.
-     LOW    — limited evidence; significant gaps remain.
-8. Respond with VALID JSON ONLY — no markdown, no code fences, no extra text."""
+4. If any part of the question is not explicitly covered by the chunks, omit that
+   part entirely — do not fill the gap with inference or general knowledge.
+5. Close with a "Key Takeaway" section: one or two sentences drawn only from
+   what the chunks explicitly state.
+6. Assess confidence:
+     HIGH   — every claim is directly and explicitly supported; no gaps.
+     MEDIUM — most claims directly supported; minor gaps acknowledged.
+     LOW    — only partial direct evidence; significant gaps remain.
+7. Respond with VALID JSON ONLY — no markdown, no code fences, no extra text."""
 
 _JSON_SCHEMA = """\
 {

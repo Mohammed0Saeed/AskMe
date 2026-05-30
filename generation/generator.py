@@ -17,7 +17,7 @@ from retrieval.models import RetrievalResult
 
 logger = logging.getLogger(__name__)
 
-NO_DATA_PHRASE = "nothing in my database"
+NO_DATA_PHRASE = "i don't know, please ask your supervisor"
 
 
 # ── Provider abstraction ──────────────────────────────────────────────────────

@@ -7,10 +7,14 @@ from functools import wraps
 
 from flask import Flask, jsonify, redirect, render_template, request, session
 
+from collections import Counter
+
 from auth import UserStore
 from config import GEMINI_MODEL, LLM_PROVIDER, OLLAMA_MODEL, RELEVANCE_THRESHOLD, SECRET_KEY
 from generation import GenerationPipeline
 from generation.audit_logger import read_by_id, read_recent
+from generation.insight_engine import InsightEngine
+from generation.ticket_store import TicketStore
 from ingestion import IngestionPipeline
 from retrieval import RetrievalPipeline
 
@@ -25,6 +29,8 @@ user_store          = UserStore()
 ingest_pipeline     = IngestionPipeline()
 retrieval_pipeline  = RetrievalPipeline()
 generation_pipeline = GenerationPipeline()
+ticket_store        = TicketStore()
+insight_engine      = InsightEngine()
 retrieval_pipeline.load_index()
 
 ALLOWED_EXTENSIONS = {".pdf", ".vtt", ".json", ".html", ".htm"}
@@ -152,6 +158,22 @@ def _build_confidential_notice(results, user) -> dict | None:
         "domains":        list(restricted_domains),
         "contacts":       contacts,
     }
+
+
+def _infer_domain(gen, results, domain_filter: str | None) -> str:
+    """
+    Determines the most likely domain for a ticket.
+    Priority: explicit domain_filter > most common citation domain > top chunk domain.
+    """
+    if domain_filter:
+        return domain_filter
+    if gen.citations:
+        domains = [c.domain for c in gen.citations if c.domain]
+        if domains:
+            return Counter(domains).most_common(1)[0][0]
+    if results:
+        return results[0].chunk.metadata.domain or "Unknown"
+    return "Unknown"
 
 
 def _write_ingest_log(user, filename: str, chunks: int, domain: str) -> None:
@@ -349,7 +371,7 @@ def ask():
         if results[0].rerank_score < RELEVANCE_THRESHOLD:
             return jsonify({
                 "query": query, "no_data": True,
-                "answer": "Nothing in my database would help me to assist in this matter.",
+                "answer": "I don't know, please ask your supervisor.",
                 "citations": [],
                 "confidence": {"level": "LOW", "score": 0.0,
                                "reason": "Retrieved documents are not relevant to this question."},
@@ -362,6 +384,20 @@ def ask():
 
         gen = generation_pipeline.generate(query, results)
         tu  = gen.token_usage
+
+        # Auto-create a ticket when confidence is LOW so experts can review gaps
+        if gen.confidence.level == "LOW":
+            ticket_store.create(
+                query             = query,
+                answer            = gen.answer,
+                confidence_level  = gen.confidence.level,
+                confidence_reason = gen.confidence.reason,
+                domain            = _infer_domain(gen, results, domain),
+                no_data           = gen.no_data,
+                user_id           = user.user_id,
+                user_name         = user.name,
+                audit_id          = gen.audit_id,
+            )
 
         return jsonify({
             "query":     query,
@@ -518,6 +554,7 @@ def audit_list():
     return jsonify({"entries": read_recent(n)})
 
 
+
 @app.route("/api/audit/<audit_id>", methods=["GET"])
 @login_required
 def audit_entry(audit_id: str):
@@ -533,6 +570,16 @@ def index_stats():
     return jsonify({"total_chunks": retrieval_pipeline.total_chunks})
 
 
+@app.route("/api/kb/documents", methods=["GET"])
+@login_required
+def kb_documents():
+    """Returns one entry per unique source document for the KB Explorer view."""
+    user = get_current_user()
+    if user.role not in ("expert", "admin"):
+        return jsonify({"error": "Access restricted to experts and admins."}), 403
+    return jsonify(retrieval_pipeline.list_documents())
+
+
 @app.route("/api/config", methods=["GET"])
 @login_required
 def get_config():
@@ -541,6 +588,130 @@ def get_config():
                         "label": f"Local · {OLLAMA_MODEL}"})
     return jsonify({"provider": "gemini", "model": GEMINI_MODEL,
                     "label": f"Gemini · {GEMINI_MODEL}"})
+
+
+# ── Ingest from raw text ─────────────────────────────────────────────────────
+
+@app.route("/api/ingest/text", methods=["POST"])
+@login_required
+def ingest_text():
+    """
+    Ingests a plain-text answer directly into the knowledge base without a file.
+    Used by experts and admins when resolving a ticket by typing the answer.
+    Optionally marks a ticket as resolved when ticket_id is supplied.
+    Domain enforcement mirrors the file-ingest route: experts are locked to
+    their own domain, admins can specify any domain.
+    """
+    user = get_current_user()
+    if user.role not in INGEST_ROLES:
+        return jsonify({"error": "Uploading content is restricted to experts and admins."}), 403
+
+    body         = request.get_json(force=True) or {}
+    text         = (body.get("text") or "").strip()
+    title        = (body.get("title") or "Manual Entry").strip()
+    access_level = (body.get("access_level") or "internal").strip()
+    domain       = (body.get("domain") or "").strip()
+    ticket_id    = (body.get("ticket_id") or "").strip()
+
+    if not text:
+        return jsonify({"error": "Text content cannot be empty."}), 400
+
+    if user.role == "expert":
+        if not domain:
+            domain = user.domain
+        elif domain != user.domain:
+            return jsonify({"error": f"You are authorised to upload for '{user.domain}' only."}), 403
+
+    try:
+        chunks = ingest_pipeline.ingest_text(text, title=title,
+                                             access_level=access_level, domain=domain)
+        added  = retrieval_pipeline.index(chunks)
+        _write_ingest_log(user, title, added, domain)
+
+        if ticket_id:
+            ticket_store.update_status(ticket_id, "resolved")
+
+        return jsonify({
+            "success":       True,
+            "total_chunks":  len(chunks),
+            "newly_indexed": added,
+            "index_size":    retrieval_pipeline.total_chunks,
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── Tickets ───────────────────────────────────────────────────────────────────
+
+@app.route("/api/tickets", methods=["GET"])
+@login_required
+def get_tickets():
+    """
+    Returns knowledge-gap tickets scoped by role:
+      - expert : only tickets whose domain matches the expert's own domain
+      - admin  : all tickets; accepts optional ?domain= query param to filter
+    Regular users cannot access tickets (403).
+    """
+    user = get_current_user()
+    if user.role not in ("expert", "admin"):
+        return jsonify({"error": "Access restricted to experts and admins."}), 403
+
+    if user.role == "expert":
+        tickets = ticket_store.get_all(domain=user.domain)
+    else:
+        domain_filter = request.args.get("domain", "").strip() or None
+        tickets = ticket_store.get_all(domain=domain_filter)
+
+    return jsonify([vars(t) for t in tickets])
+
+
+@app.route("/api/tickets/<ticket_id>", methods=["PUT"])
+@login_required
+def update_ticket(ticket_id: str):
+    """Experts and admins can flip a ticket's status between open and resolved."""
+    user = get_current_user()
+    if user.role not in ("expert", "admin"):
+        return jsonify({"error": "Access restricted to experts and admins."}), 403
+
+    body   = request.get_json(force=True) or {}
+    status = body.get("status", "").strip()
+    if status not in ("open", "resolved"):
+        return jsonify({"error": "status must be 'open' or 'resolved'."}), 400
+
+    ticket = ticket_store.update_status(ticket_id, status)
+    if not ticket:
+        return jsonify({"error": f"Ticket '{ticket_id}' not found."}), 404
+    return jsonify(vars(ticket))
+
+
+# ── Insights ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/insights", methods=["GET"])
+@login_required
+def get_insights():
+    """
+    Returns confidence distribution and per-domain breakdown computed from the
+    audit log.  No LLM call — safe to call on every tab load.
+    Visible to experts and admins only.
+    """
+    user = get_current_user()
+    if user.role not in ("expert", "admin"):
+        return jsonify({"error": "Access restricted to experts and admins."}), 403
+    return jsonify(insight_engine.confidence_distribution())
+
+
+@app.route("/api/insights/report", methods=["POST"])
+@login_required
+def get_gap_report():
+    """
+    Triggers the LLM gap-report generation.  Separated from /api/insights so
+    the LLM is only called when the user explicitly requests it, not on every
+    page load.  Visible to experts and admins only.
+    """
+    user = get_current_user()
+    if user.role not in ("expert", "admin"):
+        return jsonify({"error": "Access restricted to experts and admins."}), 403
+    return jsonify(insight_engine.generate_gap_report())
 
 
 if __name__ == "__main__":

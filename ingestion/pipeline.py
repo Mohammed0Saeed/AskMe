@@ -169,6 +169,32 @@ class IngestionPipeline:
         doc = parser.parse(file_path, access_level=access_level, domain=domain)
         return self._enrich_and_chunk(doc)
 
+    def ingest_text(
+        self,
+        text: str,
+        title: str = "Manual Entry",
+        access_level: str = "internal",
+        domain: str = "",
+    ) -> List[DocumentChunk]:
+        """
+        Ingests a raw text string directly — no file parsing needed.
+        Used when an expert types an answer directly into a ticket to fill a
+        knowledge gap.  The text is treated as a single plain document and runs
+        through the same enrichment and chunking path as every other source.
+        """
+        from datetime import date
+        doc = ParsedDocument(
+            content       = text,
+            author        = "",
+            date          = date.today().isoformat(),
+            source_system = "Manual",
+            source_file   = f"manual_{title[:40].replace(' ', '_')}.txt",
+            access_level  = access_level,
+            domain        = domain,
+            title         = title,
+        )
+        return self._enrich_and_chunk(doc)
+
     def ingest_teams_transcript(
         self,
         file_path: str,
