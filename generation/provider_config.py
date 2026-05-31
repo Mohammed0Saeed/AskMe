@@ -31,7 +31,7 @@ def get() -> dict:
     return _config
 
 
-def save(provider: str, anthropic_api_key: str = "", anthropic_model: str = "claude-sonnet-4-6") -> dict:
+def save(provider: str, anthropic_api_key: str = "", anthropic_model: str = "claude-haiku-4-5-20251001") -> dict:
     """Persist a new provider choice and return the updated config."""
     global _config
     _config = {

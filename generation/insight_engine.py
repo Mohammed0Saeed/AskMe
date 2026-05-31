@@ -86,11 +86,14 @@ class InsightEngine:
                 cits  = entry.get("citations") or []
                 trace = entry.get("retrieval_trace") or []
                 if cits:
-                    dom = cits[0].get("domain") or "Unknown"
+                    dom = cits[0].get("domain") or ""
                 elif trace:
-                    dom = trace[0].get("domain") or "Unknown"
+                    dom = trace[0].get("domain") or ""
                 else:
-                    dom = "Unknown"
+                    dom = ""
+
+                if not dom:
+                    continue  # skip entries with no domain — don't pollute the chart
 
                 if dom not in by_dom:
                     by_dom[dom] = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}

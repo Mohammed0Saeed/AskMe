@@ -5,7 +5,7 @@ import tempfile
 from datetime import datetime, timezone
 from functools import wraps
 
-from flask import Flask, jsonify, redirect, render_template, request, session
+from flask import Flask, jsonify, request, session
 
 from collections import Counter
 
@@ -27,6 +27,19 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 app.secret_key = SECRET_KEY
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"]  = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return response
+
+@app.route("/api/<path:path>", methods=["OPTIONS"])
+def options_handler(path):
+    return "", 204
+
 
 # ── Singletons ───────────────────────────────────────────────────────────────
 user_store          = UserStore()
@@ -244,10 +257,7 @@ def _write_ingest_log(user, filename: str, chunks: int, domain: str) -> None:
 
 @app.route("/login")
 def login_page():
-    """Serves the login page; redirects to the app if already authenticated."""
-    if session.get("user_id"):
-        return redirect("/")
-    return render_template("login.html")
+    return jsonify({"error": "Use the React frontend at http://localhost:5173"}), 404
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -288,9 +298,8 @@ def auth_me():
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 @app.route("/")
-@login_required
 def index():
-    return render_template("index.html")
+    return jsonify({"service": "AskMe API", "frontend": "http://localhost:5173"})
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
@@ -318,6 +327,7 @@ def ingest():
     source_type  = request.form.get("source_type", "pdf")
     access_level = request.form.get("access_level", "internal")
     domain       = request.form.get("domain", "").strip()
+    ticket_id    = request.form.get("ticket_id", "").strip()
 
     # Expert domain enforcement
     if user.role == "expert":
@@ -367,6 +377,9 @@ def ingest():
 
         added = retrieval_pipeline.index(chunks)
         _write_ingest_log(user, file.filename, added, domain)
+
+        if ticket_id:
+            ticket_store.update_status(ticket_id, "resolved")
 
         return jsonify({
             "success":       True,
@@ -693,7 +706,7 @@ def get_config():
     cfg      = _provider_config.get()
     provider = cfg.get("provider") or LLM_PROVIDER
     if provider == "anthropic":
-        model = cfg.get("anthropic_model", "claude-sonnet-4-6")
+        model = cfg.get("anthropic_model", "claude-haiku-4-5-20251001")
         return jsonify({"provider": "anthropic", "model": model,
                         "label": f"Anthropic · {model}"})
     if provider == "ollama":
@@ -711,7 +724,7 @@ def get_model_config():
     provider = cfg.get("provider") or LLM_PROVIDER
     return jsonify({
         "provider":         provider,
-        "anthropic_model":  cfg.get("anthropic_model", "claude-sonnet-4-6"),
+        "anthropic_model":  cfg.get("anthropic_model", "claude-haiku-4-5-20251001"),
         "anthropic_key_set": bool(cfg.get("anthropic_api_key", "").strip()),
         "available_models": ANTHROPIC_MODELS,
     })
@@ -729,7 +742,7 @@ def set_model_config():
 
     if provider == "anthropic":
         api_key = (body.get("anthropic_api_key") or "").strip()
-        model   = (body.get("anthropic_model") or "claude-sonnet-4-6").strip()
+        model   = (body.get("anthropic_model") or "claude-haiku-4-5-20251001").strip()
         if model not in ANTHROPIC_MODELS:
             return jsonify({"error": f"Unknown Anthropic model '{model}'."}), 400
 
@@ -746,7 +759,7 @@ def set_model_config():
     else:
         # Keep any existing Anthropic key so it isn't wiped when switching back
         existing_key = _provider_config.get().get("anthropic_api_key", "")
-        existing_model = _provider_config.get().get("anthropic_model", "claude-sonnet-4-6")
+        existing_model = _provider_config.get().get("anthropic_model", "claude-haiku-4-5-20251001")
         _provider_config.save(provider=provider,
                               anthropic_api_key=existing_key,
                               anthropic_model=existing_model)
@@ -1026,4 +1039,7 @@ def training_progress():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # use_debugger=False disables the DebuggedApplication WSGI middleware whose
+    # cross-origin check blocks every proxied request from the Vite dev server.
+    # Auto-reload and debug logging are kept via debug=True + use_reloader=True.
+    app.run(debug=True, use_debugger=False, use_reloader=True, port=5001)
