@@ -18,9 +18,9 @@ from generation.prompt_builder import build_prompt
 from retrieval.models import RetrievalResult
 
 ANTHROPIC_MODELS = [
+    "claude-haiku-4-5-20251001",
     "claude-sonnet-4-6",
     "claude-opus-4-8",
-    "claude-haiku-4-5-20251001",
 ]
 
 logger = logging.getLogger(__name__)
@@ -213,7 +213,7 @@ class AnthropicProvider(BaseProvider):
     deterministic, citation-grounded answers.
     """
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6") -> None:
+    def __init__(self, api_key: str, model: str = "claude-haiku-4-5-20251001") -> None:
         if not api_key:
             raise ValueError("Anthropic API key is not set.")
         self._client = _anthropic_sdk.Anthropic(api_key=api_key)
@@ -250,7 +250,7 @@ def _get_provider() -> BaseProvider:
 
     if provider == "anthropic":
         api_key = cfg.get("anthropic_api_key", "")
-        model   = cfg.get("anthropic_model", "claude-sonnet-4-6")
+        model   = cfg.get("anthropic_model", "claude-haiku-4-5-20251001")
         return AnthropicProvider(api_key=api_key, model=model)
     if provider == "ollama":
         return OllamaProvider()
